@@ -152,6 +152,27 @@ const PRESCRIPTIONS = [
   }
 ];
 
+let CLINICAL_MESSAGES = [
+  {
+    id: 'msg_1',
+    sender_id: 'u_therapist_1',
+    sender_name: 'Dr. Rajesh Kulkarni, PT',
+    receiver_id: 'u_patient_1',
+    message_text: 'Good morning Asha. Please focus on slow, controlled finger release during Squeeze & Fill.',
+    translated_text: 'सुप्रभात आशा। कृपया निचोड़ें और भरें के दौरान धीमी, नियंत्रित उंगली छोड़ने पर ध्यान दें।',
+    created_at: new Date(Date.now() - 7200000).toISOString()
+  },
+  {
+    id: 'msg_2',
+    sender_id: 'u_patient_1',
+    sender_name: 'Asha Sharma',
+    receiver_id: 'u_therapist_1',
+    message_text: 'Thank you doctor, I felt much less fatigue in my fingers today.',
+    translated_text: 'धन्यवाद डॉक्टर, आज मुझे अपनी उंगलियों में बहुत कम थकान महसूस हुई।',
+    created_at: new Date(Date.now() - 3600000).toISOString()
+  }
+];
+
 let CLINICAL_MEETINGS = [
   {
     id: 'mt_weekly_kinematics',
@@ -178,6 +199,8 @@ let CLINICAL_MEETINGS = [
     status: 'scheduled'
   }
 ];
+
+let WEBRTC_SIGNALS = [];
 
 export default async function handler(req, res) {
   // Enable CORS
@@ -323,6 +346,56 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, meeting: newMeeting, meetings: CLINICAL_MEETINGS });
     }
     return res.status(200).json({ meetings: CLINICAL_MEETINGS });
+  }
+
+  // 4c. Real-Time Patient & Clinician Messages
+  if (pathname === '/messages' || pathname.startsWith('/messages')) {
+    if (req.method === 'POST') {
+      const { receiver_id = 'u_patient_1', message_text = '', target_language = 'hi' } = body;
+      const isDoctor = req.headers.authorization && req.headers.authorization.includes('therapist');
+      const sender_id = isDoctor ? 'u_therapist_1' : 'u_patient_1';
+      const sender_name = isDoctor ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma';
+      const newMsg = {
+        id: 'msg_' + Date.now().toString(36),
+        sender_id,
+        sender_name,
+        receiver_id,
+        message_text,
+        translated_text: message_text,
+        created_at: new Date().toISOString()
+      };
+      CLINICAL_MESSAGES.push(newMsg);
+      return res.status(200).json({ success: true, message: newMsg, messages: CLINICAL_MESSAGES });
+    }
+    return res.status(200).json({ messages: CLINICAL_MESSAGES });
+  }
+
+  // WebRTC Multi-Tier Signaling Bridge
+  if (pathname === '/webrtc/signal' || pathname.startsWith('/webrtc/signal')) {
+    if (req.method === 'POST') {
+      const { roomId = 'remotion-room-pt_1', senderId = 'peer', type = 'ping', data = null, userName = '', role = '' } = body;
+      const signalEntry = {
+        id: 'sig_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+        roomId,
+        senderId,
+        type,
+        data,
+        userName,
+        role,
+        timestamp: Date.now()
+      };
+      WEBRTC_SIGNALS.push(signalEntry);
+      if (WEBRTC_SIGNALS.length > 250) WEBRTC_SIGNALS.shift();
+      return res.status(200).json({ success: true, signal: signalEntry });
+    }
+    // GET: Query signals for this room
+    const targetRoomId = url.searchParams.get('roomId') || 'remotion-room-pt_1';
+    const excludeSender = url.searchParams.get('excludeSender') || '';
+    const since = parseInt(url.searchParams.get('since') || '0', 10);
+    const matched = WEBRTC_SIGNALS.filter(
+      s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp > since
+    );
+    return res.status(200).json({ success: true, signals: matched });
   }
 
   // 5. Therapist Patients Caseload

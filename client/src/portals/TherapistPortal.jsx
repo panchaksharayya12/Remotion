@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Stethoscope, Users, Search, Activity, Calendar, Clock,
   Plus, Edit, Pause, Play, Trash2, Video, MessageSquare,
@@ -67,6 +67,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const syncChannelRef = useRef(null);
 
   // Telehealth Appointments State
   const [appointments, setAppointments] = useState(() => {
@@ -185,22 +186,22 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     // 1. Immediately launch modal in Therapist portal
     setSelectedMeeting(meeting);
 
-    // 2. Broadcast immediately to Patient portal via BroadcastChannel (<1ms cross-window sync)
-    try {
-      const syncChannel = new BroadcastChannel('remotion_telehealth_sync');
-      syncChannel.postMessage({
-        type: 'IMMEDIATE_START_CALL',
-        callerRole: 'therapist',
-        callerName: 'Dr. Rajesh Kulkarni, PT',
-        meeting,
-        timestamp: Date.now()
-      });
-      syncChannel.close();
-    } catch (e) {
-      console.warn('BroadcastChannel error:', e);
+    // 2. Broadcast immediately to Patient portal via persistent BroadcastChannel
+    if (syncChannelRef.current) {
+      try {
+        syncChannelRef.current.postMessage({
+          type: 'IMMEDIATE_START_CALL',
+          callerRole: 'therapist',
+          callerName: 'Dr. Rajesh Kulkarni, PT',
+          meeting,
+          timestamp: Date.now()
+        });
+      } catch (e) {
+        console.warn('BroadcastChannel error:', e);
+      }
     }
 
-    // 3. Trigger localStorage storage event fallback
+    // 3. Trigger localStorage storage event fallback (<1ms across all windows/browsers)
     try {
       localStorage.setItem('remotion_telehealth_call_signal', JSON.stringify({
         type: 'IMMEDIATE_START_CALL',
@@ -249,15 +250,15 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       localStorage.setItem('remotion_all_appointments', JSON.stringify(updatedList));
     } catch (err) {}
 
-    // Sync to Patient portal via BroadcastChannel
-    try {
-      const bc = new BroadcastChannel('remotion_telehealth_sync');
-      bc.postMessage({
-        type: 'APPOINTMENT_SCHEDULED',
-        appointment: newMeeting
-      });
-      bc.close();
-    } catch (err) {}
+    // Sync to Patient portal via persistent BroadcastChannel
+    if (syncChannelRef.current) {
+      try {
+        syncChannelRef.current.postMessage({
+          type: 'APPOINTMENT_SCHEDULED',
+          appointment: newMeeting
+        });
+      } catch (err) {}
+    }
 
     // Also persist via API
     try {
@@ -291,13 +292,15 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         setTimeout(() => setToastMessage(null), 6000);
       } else if (data.type === 'APPOINTMENT_SCHEDULED' && data.appointment) {
         setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
+      } else if (data.type === 'CHAT_MESSAGE' && data.message) {
+        setChatMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
       }
     };
 
-    let syncChannel = null;
     try {
-      syncChannel = new BroadcastChannel('remotion_telehealth_sync');
-      syncChannel.onmessage = handleTelehealthMessage;
+      const bc = new BroadcastChannel('remotion_telehealth_sync');
+      syncChannelRef.current = bc;
+      bc.onmessage = handleTelehealthMessage;
     } catch (e) {}
 
     // 2. Cross-tab localStorage fallback listener
@@ -308,6 +311,13 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
             playRingChime();
             setSelectedMeeting(data.meeting);
+          }
+        } catch (err) {}
+      } else if (e.key === 'remotion_chat_sync_signal' && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          if (data.type === 'CHAT_MESSAGE' && data.message) {
+            setChatMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
           }
         } catch (err) {}
       }
@@ -342,7 +352,9 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     }
 
     return () => {
-      if (syncChannel) syncChannel.close();
+      if (syncChannelRef.current) {
+        try { syncChannelRef.current.close(); } catch (e) {}
+      }
       window.removeEventListener('storage', handleStorageEvent);
       if (api.socket) {
         if (handlePatientSession) api.socket.off('patient_session_completed', handlePatientSession);
@@ -372,7 +384,34 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     try {
       const targetLang = selectedPatient.primary_language || 'hi';
       const sent = await api.sendMessage(selectedPatient.user_id, textToSend, 'en', targetLang);
-      setChatMessages(prev => [...prev, sent.message]);
+      const msgObj = sent?.message || {
+        id: 'msg_' + Date.now().toString(36),
+        sender_id: 'u_therapist_1',
+        sender_name: 'Dr. Rajesh Kulkarni, PT',
+        receiver_id: selectedPatient.user_id,
+        message_text: textToSend,
+        created_at: new Date().toISOString()
+      };
+      setChatMessages(prev => [...prev, msgObj]);
+
+      if (syncChannelRef.current) {
+        try {
+          syncChannelRef.current.postMessage({
+            type: 'CHAT_MESSAGE',
+            message: msgObj,
+            timestamp: Date.now()
+          });
+        } catch (e) {}
+      }
+
+      try {
+        localStorage.setItem('remotion_chat_sync_signal', JSON.stringify({
+          type: 'CHAT_MESSAGE',
+          message: msgObj,
+          timestamp: Date.now()
+        }));
+      } catch (e) {}
+
       if (!customText) setChatInput('');
     } catch (err) {
       console.error('Failed to send therapist message:', err);
@@ -533,19 +572,19 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                     <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm">
-                      <span className="text-[10px] text-slate-400 block font-bold">SHOULDER ABDUCTION</span>
+                      <span className="text-[10px] text-slate-700 block font-bold">SHOULDER ABDUCTION</span>
                       <span className="text-lg font-black text-blue-700">76.4°</span>
                     </div>
                     <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm">
-                      <span className="text-[10px] text-slate-400 block font-bold">FINGER EXTENSION SPAN</span>
+                      <span className="text-[10px] text-slate-700 block font-bold">FINGER EXTENSION SPAN</span>
                       <span className="text-lg font-black text-emerald-700">88.2%</span>
                     </div>
                     <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm">
-                      <span className="text-[10px] text-slate-400 block font-bold">TREMOR SPECTRUM</span>
+                      <span className="text-[10px] text-slate-700 block font-bold">TREMOR SPECTRUM</span>
                       <span className="text-lg font-black text-slate-800">1.2 Hz (Normal)</span>
                     </div>
                     <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm">
-                      <span className="text-[10px] text-slate-400 block font-bold">REACTION LATENCY</span>
+                      <span className="text-[10px] text-slate-700 block font-bold">REACTION LATENCY</span>
                       <span className="text-lg font-black text-amber-700">340 ms</span>
                     </div>
                   </div>
@@ -765,19 +804,19 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                   {/* Summary Metric Chips */}
                   <div className="my-5 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                      <span className="text-slate-400 text-[10px] block font-bold">TOTAL SESSIONS</span>
+                      <span className="text-slate-700 text-[10px] block font-bold">TOTAL SESSIONS</span>
                       <span className="text-base font-black text-slate-900">{selectedPatient.total_sessions || 6} Completed</span>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                      <span className="text-slate-400 text-[10px] block font-bold">AVG ACCURACY</span>
+                      <span className="text-slate-700 text-[10px] block font-bold">AVG ACCURACY</span>
                       <span className="text-base font-black text-emerald-700">{Math.round(selectedPatient.avg_accuracy || 94)}%</span>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                      <span className="text-slate-400 text-[10px] block font-bold">PEAK RANGE OF MOTION</span>
+                      <span className="text-slate-700 text-[10px] block font-bold">PEAK RANGE OF MOTION</span>
                       <span className="text-base font-black text-blue-700">{Math.round(selectedPatient.peak_rom || 82)}°</span>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                      <span className="text-slate-400 text-[10px] block font-bold">ACTIVE PRESCRIPTIONS</span>
+                      <span className="text-slate-700 text-[10px] block font-bold">ACTIVE PRESCRIPTIONS</span>
                       <span className="text-base font-black text-amber-700">{selectedPatient.active_prescriptions_count || 3} Tasks</span>
                     </div>
                   </div>
@@ -1137,7 +1176,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                       key={m.id}
                       className={`flex flex-col ${isTherapist ? 'items-end' : 'items-start'}`}
                     >
-                      <div className="text-[10px] text-slate-400 mb-1 font-mono">
+                      <div className="text-[10px] text-slate-600 mb-1 font-mono font-bold">
                         {isTherapist ? 'Dr. Rajesh Kulkarni (You)' : selectedPatient.name}
                       </div>
 

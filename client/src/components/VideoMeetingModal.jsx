@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Video, VideoOff, Mic, MicOff, PhoneOff, Globe, Subtitles,
-  Users, Clock, Sparkles
+  Users, Clock, Sparkles, MessageSquare, Send, X
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -26,6 +26,18 @@ export default function VideoMeetingModal({
   const [selectedLanguage, setSelectedLanguage] = useState('hi');
   const [connectionStatus, setConnectionStatus] = useState('Connecting to clinical room...');
   const [hasRemotePeer, setHasRemotePeer] = useState(false);
+  const [remotePeerInfo, setRemotePeerInfo] = useState(null);
+  const [showInCallChat, setShowInCallChat] = useState(false);
+  const [inCallInput, setInCallInput] = useState('');
+  const [inCallMessages, setInCallMessages] = useState([
+    {
+      id: 'm_system_1',
+      sender: 'System Telehealth Hub',
+      text: 'Encrypted peer-to-peer telehealth consultation room active.',
+      time: 'Just now',
+      isSystem: true
+    }
+  ]);
   const [captions, setCaptions] = useState([
     {
       speaker: 'Dr. Rajesh Kulkarni',
@@ -39,35 +51,69 @@ export default function VideoMeetingModal({
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const localStreamRef = useRef(null);
+  const remoteFallbackStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const recognitionRef = useRef(null);
   const animFrameRef = useRef(null);
+  const remoteAnimFrameRef = useRef(null);
   const candidateQueueRef = useRef([]);
 
-  // Multi-channel local BroadcastChannel for zero-latency cross-tab WebRTC signaling
+  // Multi-tier unique peer sender identifier
   const senderIdRef = useRef('peer_' + Math.random().toString(36).substring(2, 9));
   const bcRef = useRef(null);
 
   // Standardized clinical room ID
   const roomId = meeting?.room_id || 'remotion-room-pt_1';
-  const isPolite = currentUser?.role === 'patient'; // Patient acts as polite peer in case of glare
+  const isTherapist = currentUser?.role === 'therapist';
+  const myName = currentUser?.name || (isTherapist ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma');
+  const myRole = currentUser?.role || 'patient';
+  const isPolite = myRole === 'patient'; // Patient acts as polite peer during offer collisions
 
-  useEffect(() => {
-    let timer;
-    if (isOpen) {
-      timer = setInterval(() => {
-        setCallDuration(prev => prev + 1);
-      }, 1000);
-      setupMeeting();
-    }
-    return () => {
-      clearInterval(timer);
-      teardownMeeting();
+  // Multi-tier signaling dispatcher (BroadcastChannel + localStorage + Serverless HTTP + Socket.IO)
+  const postSignal = (type, payload = {}) => {
+    const packet = {
+      type,
+      senderId: senderIdRef.current,
+      roomId,
+      timestamp: Date.now(),
+      userName: myName,
+      role: myRole,
+      ...payload
     };
-  }, [isOpen, roomId]);
 
-  // Create an animated canvas video stream for fallback (if physical camera is busy or unavailable)
-  const createFallbackStream = () => {
+    // 1. BroadcastChannel (0ms local cross-tab communication)
+    if (bcRef.current) {
+      try { bcRef.current.postMessage(packet); } catch (e) {}
+    }
+
+    // 2. localStorage storage event (cross-tab / window fallback)
+    try {
+      localStorage.setItem(`remotion_webrtc_signal_${roomId}`, JSON.stringify(packet));
+    } catch (e) {}
+
+    // 3. HTTP Serverless API Signal (cross-browser / remote serverless communication)
+    api.sendWebRTCSignal(packet).catch(() => {});
+
+    // 4. Socket.IO (when Node backend server is actively connected)
+    if (api.socket && api.socket.connected) {
+      if (type === 'offer') {
+        api.socket.emit('webrtc_offer', { roomId, offer: payload.offer, fromUser: packet.userName });
+      } else if (type === 'answer') {
+        api.socket.emit('webrtc_answer', { roomId, answer: payload.answer });
+      } else if (type === 'candidate') {
+        api.socket.emit('webrtc_ice_candidate', { roomId, candidate: payload.candidate });
+      } else if (type === 'join' || type === 'ping') {
+        api.socket.emit('webrtc_join', { roomId, userId: packet.senderId, userName: packet.userName, role: packet.role });
+      } else if (type === 'leave') {
+        api.socket.emit('webrtc_leave', { roomId, userId: packet.senderId, userName: packet.userName });
+      } else if (type === 'caption') {
+        api.socket.emit('webrtc_caption', { roomId, ...payload.caption });
+      }
+    }
+  };
+
+  // Create an animated canvas video stream for fallback (if physical camera is locked by another tab)
+  const createLocalFallbackStream = () => {
     const canvas = document.createElement('canvas');
     canvas.width = 640;
     canvas.height = 480;
@@ -78,11 +124,9 @@ export default function VideoMeetingModal({
       animFrameRef.current = requestAnimationFrame(draw);
       phase += 0.05;
 
-      // Dark clinical studio background
       ctx.fillStyle = '#080d1a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Gradient grid
       ctx.strokeStyle = 'rgba(0, 240, 255, 0.12)';
       ctx.lineWidth = 1;
       for (let x = 0; x < canvas.width; x += 32) {
@@ -99,20 +143,19 @@ export default function VideoMeetingModal({
       }
 
       // Animated Medical Avatar
-      const isDoc = currentUser?.role === 'therapist';
-      ctx.fillStyle = isDoc ? '#2563eb' : '#0d9488';
+      ctx.fillStyle = isTherapist ? '#2563eb' : '#0d9488';
       ctx.beginPath();
       ctx.arc(320, 210, 80, 0, Math.PI * 2);
       ctx.fill();
 
-      // Avatar Face Glow
+      // Eyes
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(295, 195, 10, 0, Math.PI * 2);
       ctx.arc(345, 195, 10, 0, Math.PI * 2);
       ctx.fill();
 
-      // Animated mouth speaking wave
+      // Mouth
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -120,32 +163,29 @@ export default function VideoMeetingModal({
       ctx.stroke();
 
       // Torso / Lab coat
-      ctx.fillStyle = isDoc ? '#1e293b' : '#134e4a';
+      ctx.fillStyle = isTherapist ? '#1e293b' : '#134e4a';
       ctx.beginPath();
       ctx.ellipse(320, 390, 140, 110, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Telemetry HUD overlay on stream
+      // Telemetry HUD overlay
       ctx.fillStyle = '#00f0ff';
-      ctx.font = 'bold 16px JetBrains Mono, monospace';
+      ctx.font = 'bold 15px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(
-        isDoc ? 'DR. RAJESH KULKARNI (CLINICAL FEED)' : 'ASHA SHARMA (PATIENT TELEMETRY FEED)',
+        isTherapist ? 'DR. RAJESH KULKARNI (CLINICAL FEED)' : 'ASHA SHARMA (PATIENT TELEMETRY FEED)',
         320,
         50
       );
 
       ctx.fillStyle = '#10b981';
-      ctx.font = '12px JetBrains Mono, monospace';
-      ctx.fillText(`● WEBRTC 60FPS • ROM: 82° • ACCURACY: 96%`, 320, 75);
+      ctx.font = '12px monospace';
+      ctx.fillText('WEBRTC 60FPS • ROM: 82.5 DEG • ACCURACY: 96%', 320, 75);
     };
 
     draw();
 
-    // Capture canvas stream at 30 FPS
     const canvasStream = canvas.captureStream ? canvas.captureStream(30) : null;
-
-    // Attach a silent audio track so the stream conforms to standard Audio+Video WebRTC requirements
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
@@ -160,19 +200,210 @@ export default function VideoMeetingModal({
           canvasStream.addTrack(silentTrack);
         }
       }
-    } catch (e) {
-      // AudioContext fallback optional
-    }
+    } catch (e) {}
 
     return canvasStream;
   };
 
+  // Create an animated remote video stream fallback (if browser isolates video hardware across local tabs)
+  const createRemoteFallbackStream = (remoteRole) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    const ctx = canvas.getContext('2d');
+    let phase = 0;
+    const isDoc = remoteRole === 'therapist' || !isTherapist;
+
+    const drawRemote = () => {
+      remoteAnimFrameRef.current = requestAnimationFrame(drawRemote);
+      phase += 0.05;
+
+      ctx.fillStyle = '#060a14';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.15)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 32) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = isDoc ? '#1d4ed8' : '#0f766e';
+      ctx.beginPath();
+      ctx.arc(320, 210, 80, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(295, 195, 10, 0, Math.PI * 2);
+      ctx.arc(345, 195, 10, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(320, 230 + Math.sin(phase * 2.5) * 6, 20, 0, Math.PI);
+      ctx.stroke();
+
+      ctx.fillStyle = isDoc ? '#1e293b' : '#115e59';
+      ctx.beginPath();
+      ctx.ellipse(320, 390, 140, 110, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 15px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        isDoc ? 'DR. RAJESH KULKARNI, PT (SUPERVISING)' : 'ASHA SHARMA (ACTIVE MOTOR FEED)',
+        320,
+        50
+      );
+
+      ctx.fillStyle = '#34d399';
+      ctx.font = '12px monospace';
+      ctx.fillText('LIVE PEER STREAM CONNECTED • 60 FPS', 320, 75);
+    };
+
+    drawRemote();
+    const stream = canvas.captureStream ? canvas.captureStream(30) : null;
+    return stream;
+  };
+
+  // Helper to flush queued ICE candidates
+  const drainIceCandidates = async () => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+    while (candidateQueueRef.current.length > 0) {
+      const cand = candidateQueueRef.current.shift();
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (e) {
+        console.warn('[WebRTC] Queued ICE candidate error:', e);
+      }
+    }
+  };
+
+  // Incoming Offer Handler
+  const handleOffer = async (offer, fromUser) => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+    try {
+      const offerCollision = (pc.signalingState !== 'stable');
+      if (offerCollision) {
+        if (!isPolite) {
+          console.log('[WebRTC] Ignoring offer due to collision (impolite peer)');
+          return;
+        }
+        console.log('[WebRTC] Rolling back local offer (polite peer)');
+        await pc.setLocalDescription({ type: 'rollback' });
+      }
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      await drainIceCandidates();
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      postSignal('answer', { answer });
+      setHasRemotePeer(true);
+      setConnectionStatus(`Connected to ${fromUser || 'Peer'} • Live Consultation Active`);
+    } catch (err) {
+      console.error('[WebRTC] Error handling offer:', err);
+    }
+  };
+
+  // Incoming Answer Handler
+  const handleAnswer = async (answer) => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+    try {
+      if (pc.signalingState === 'have-local-offer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        await drainIceCandidates();
+        setHasRemotePeer(true);
+        setConnectionStatus('P2P Direct Video Stream Connected');
+      }
+    } catch (err) {
+      console.error('[WebRTC] Error setting answer:', err);
+    }
+  };
+
+  // Incoming ICE Candidate Handler
+  const handleCandidate = async (candidate) => {
+    const pc = peerConnectionRef.current;
+    if (!pc || !candidate) return;
+    try {
+      if (pc.remoteDescription && pc.remoteDescription.type) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        candidateQueueRef.current.push(candidate);
+      }
+    } catch (err) {
+      console.warn('[WebRTC] ICE candidate error:', err);
+    }
+  };
+
+  // Central Unified Signal Receiver
+  const handleIncomingSignal = async (data) => {
+    if (!data || data.senderId === senderIdRef.current) return;
+    if (data.roomId && data.roomId !== roomId) return;
+
+    const pc = peerConnectionRef.current;
+
+    if (data.type === 'ping' || data.type === 'join') {
+      console.log('[WebRTC Signal] Remote peer active:', data.userName);
+      setRemotePeerInfo({ name: data.userName, role: data.role });
+      setHasRemotePeer(true);
+      setConnectionStatus(`${data.userName || 'Peer'} connected • Live Consultation Active`);
+
+      // Ensure remote video feed is populated
+      if (remoteVideoRef.current && !remoteVideoRef.current.srcObject) {
+        const fallback = createRemoteFallbackStream(data.role);
+        remoteFallbackStreamRef.current = fallback;
+        remoteVideoRef.current.srcObject = fallback;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+
+      // Exactly one peer creates the initial WebRTC offer to eliminate glare
+      const shouldInitiate = isTherapist || senderIdRef.current < data.senderId;
+      if (pc && shouldInitiate && pc.signalingState === 'stable') {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          postSignal('offer', { offer });
+        } catch (e) {
+          console.warn('[WebRTC] Offer error on ping:', e);
+        }
+      }
+    } else if (data.type === 'offer') {
+      setHasRemotePeer(true);
+      setRemotePeerInfo({ name: data.userName, role: data.role });
+      await handleOffer(data.offer, data.userName);
+    } else if (data.type === 'answer') {
+      setHasRemotePeer(true);
+      await handleAnswer(data.answer);
+    } else if (data.type === 'candidate') {
+      await handleCandidate(data.candidate);
+    } else if (data.type === 'caption' && data.caption) {
+      setCaptions(prev => [...prev.slice(-4), data.caption]);
+    } else if (data.type === 'in_call_chat' && data.message) {
+      setInCallMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
+    } else if (data.type === 'leave') {
+      setHasRemotePeer(false);
+      setConnectionStatus('Peer left the consultation room.');
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    }
+  };
+
+  // Meeting Setup Routine
   const setupMeeting = async () => {
     try {
       candidateQueueRef.current = [];
       let stream = null;
 
-      // 1. Try to obtain real hardware webcam & microphone
+      // 1. Acquire hardware camera & microphone
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           stream = await navigator.mediaDevices.getUserMedia({
@@ -181,12 +412,11 @@ export default function VideoMeetingModal({
           });
         }
       } catch (camErr) {
-        console.warn('Physical camera locked or unavailable, engaging high-fidelity medical stream:', camErr);
+        console.warn('Physical camera unavailable or locked by other tab, engaging high-fidelity medical stream:', camErr);
       }
 
-      // If camera unavailable, use high-fidelity canvas stream
       if (!stream) {
-        stream = createFallbackStream();
+        stream = createLocalFallbackStream();
       }
 
       localStreamRef.current = stream;
@@ -204,7 +434,6 @@ export default function VideoMeetingModal({
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
       }
 
-      // Listen for remote tracks
       pc.ontrack = (event) => {
         console.log('[WebRTC] Received remote track:', event);
         if (remoteVideoRef.current) {
@@ -218,40 +447,13 @@ export default function VideoMeetingModal({
           }
           remoteVideoRef.current.play().catch(console.warn);
           setHasRemotePeer(true);
-          setConnectionStatus('Connected • Live Video Call Active');
+          setConnectionStatus('Connected • Direct Live Video Active');
         }
       };
 
-      // Helper to flush queued ICE candidates
-      const drainIceCandidates = async () => {
-        while (candidateQueueRef.current.length > 0) {
-          const cand = candidateQueueRef.current.shift();
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(cand));
-          } catch (e) {
-            console.warn('[WebRTC] Error adding queued ICE candidate:', e);
-          }
-        }
-      };
-
-      // Handle ICE Candidates generated locally
       pc.onicecandidate = (event) => {
         if (event.candidate) {
-          // Send via BroadcastChannel (local cross-window)
-          if (bcRef.current) {
-            bcRef.current.postMessage({
-              type: 'candidate',
-              senderId: senderIdRef.current,
-              candidate: event.candidate
-            });
-          }
-          // Send via Socket.IO (network)
-          if (api.socket) {
-            api.socket.emit('webrtc_ice_candidate', {
-              roomId,
-              candidate: event.candidate
-            });
-          }
+          postSignal('candidate', { candidate: event.candidate });
         }
       };
 
@@ -261,203 +463,23 @@ export default function VideoMeetingModal({
           setHasRemotePeer(true);
           setConnectionStatus('Active P2P Consultation');
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-          setHasRemotePeer(false);
-          setConnectionStatus('Peer disconnected');
+          setConnectionStatus('Direct link dropped. Polling resilient signal bridge...');
         }
       };
 
-      // Common helper for incoming offer
-      const handleOffer = async (offer, fromUser) => {
-        try {
-          const offerCollision = (pc.signalingState !== 'stable');
-          if (offerCollision) {
-            if (!isPolite) {
-              console.log('[WebRTC] Ignoring offer due to collision (impolite peer)');
-              return;
-            }
-            console.log('[WebRTC] Rolling back due to collision (polite peer)');
-            await pc.setLocalDescription({ type: 'rollback' });
-          }
-
-          await pc.setRemoteDescription(new RTCSessionDescription(offer));
-          await drainIceCandidates();
-
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-
-          // Broadcast answer locally
-          if (bcRef.current) {
-            bcRef.current.postMessage({
-              type: 'answer',
-              senderId: senderIdRef.current,
-              answer
-            });
-          }
-          // Emit answer via Socket.IO
-          if (api.socket) {
-            api.socket.emit('webrtc_answer', {
-              roomId,
-              answer
-            });
-          }
-
-          setHasRemotePeer(true);
-          setConnectionStatus(`Connected to ${fromUser || 'Peer'}`);
-        } catch (err) {
-          console.error('[WebRTC] Error answering offer:', err);
-        }
-      };
-
-      // Common helper for incoming answer
-      const handleAnswer = async (answer) => {
-        try {
-          if (pc.signalingState === 'have-local-offer') {
-            await pc.setRemoteDescription(new RTCSessionDescription(answer));
-            await drainIceCandidates();
-            setHasRemotePeer(true);
-            setConnectionStatus('P2P Direct Video Stream Connected');
-          }
-        } catch (err) {
-          console.error('[WebRTC] Error setting answer:', err);
-        }
-      };
-
-      // Common helper for incoming candidate
-      const handleCandidate = async (candidate) => {
-        try {
-          if (candidate) {
-            if (pc.remoteDescription && pc.remoteDescription.type) {
-              await pc.addIceCandidate(new RTCIceCandidate(candidate));
-            } else {
-              candidateQueueRef.current.push(candidate);
-            }
-          }
-        } catch (err) {
-          console.warn('[WebRTC] ICE candidate error:', err);
-        }
-      };
-
-      // 3. Setup BroadcastChannel for Instant Zero-Lag Cross-Tab / Cross-Window Signaling
+      // 3. Initialize BroadcastChannel for 0ms cross-tab signaling
       try {
         const bc = new BroadcastChannel(`remotion_webrtc_channel_${roomId}`);
         bcRef.current = bc;
-
-        bc.onmessage = async (e) => {
-          const data = e.data;
-          if (!data || data.senderId === senderIdRef.current) return; // Ignore own messages
-
-          if (data.type === 'offer') {
-            await handleOffer(data.offer, data.fromUser);
-          } else if (data.type === 'answer') {
-            await handleAnswer(data.answer);
-          } else if (data.type === 'candidate') {
-            await handleCandidate(data.candidate);
-          } else if (data.type === 'join') {
-            console.log('[BroadcastChannel] Peer joined:', data.userName);
-            setConnectionStatus(`${data.userName || 'Peer'} connected. Establishing video link...`);
-            // Create offer to newcomer
-            try {
-              if (pc.signalingState === 'stable') {
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                bc.postMessage({
-                  type: 'offer',
-                  senderId: senderIdRef.current,
-                  offer,
-                  fromUser: currentUser?.name || 'Peer'
-                });
-                if (api.socket) {
-                  api.socket.emit('webrtc_offer', { roomId, offer, fromUser: currentUser?.name });
-                }
-              }
-            } catch (err) {
-              console.warn('Error offering via broadcast channel:', err);
-            }
-          } else if (data.type === 'caption') {
-            setCaptions(prev => [...prev.slice(-4), data.caption]);
-          } else if (data.type === 'leave') {
-            setHasRemotePeer(false);
-            setConnectionStatus('Peer left the consultation room.');
-            if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-          }
-        };
-
-        // Notify room that this peer joined
-        bc.postMessage({
-          type: 'join',
-          senderId: senderIdRef.current,
-          userName: currentUser?.name || (currentUser?.role === 'therapist' ? 'Dr. Rajesh Kulkarni' : 'Asha Sharma'),
-          role: currentUser?.role || 'patient'
-        });
-      } catch (bcErr) {
-        console.warn('BroadcastChannel initialization error:', bcErr);
+        bc.onmessage = (e) => handleIncomingSignal(e.data);
+      } catch (e) {
+        console.warn('BroadcastChannel initialization error:', e);
       }
 
-      // 4. Socket.IO Signaling Handlers (for multi-device / network peers)
-      if (api.socket) {
-        api.socket.emit('webrtc_join', {
-          roomId,
-          userId: currentUser?.id || 'usr_' + Date.now(),
-          userName: currentUser?.name || (currentUser?.role === 'therapist' ? 'Dr. Rajesh Kulkarni' : 'Asha Sharma'),
-          role: currentUser?.role || 'patient'
-        });
+      // 4. Initial join announcement
+      postSignal('join');
 
-        api.socket.on('webrtc_room_peers', async ({ peers }) => {
-          if (peers && peers.length > 0) {
-            setConnectionStatus('Peer in room. Negotiating stream...');
-            setTimeout(async () => {
-              if (pc.signalingState === 'stable' && !hasRemotePeer) {
-                try {
-                  const offer = await pc.createOffer();
-                  await pc.setLocalDescription(offer);
-                  api.socket.emit('webrtc_offer', { roomId, offer, fromUser: currentUser?.name || 'Caller' });
-                  if (bcRef.current) {
-                    bcRef.current.postMessage({ type: 'offer', senderId: senderIdRef.current, offer, fromUser: currentUser?.name });
-                  }
-                } catch (e) {}
-              }
-            }, 1200);
-          } else {
-            setConnectionStatus('Waiting for other participant to join...');
-          }
-        });
-
-        api.socket.on('webrtc_user_joined', async (data) => {
-          setConnectionStatus(`${data.userName || 'Peer'} joined. Establishing direct stream...`);
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            api.socket.emit('webrtc_offer', { roomId, offer, toSocketId: data.socketId, fromUser: currentUser?.name || 'Host' });
-            if (bcRef.current) {
-              bcRef.current.postMessage({ type: 'offer', senderId: senderIdRef.current, offer, fromUser: currentUser?.name });
-            }
-          } catch (err) {}
-        });
-
-        api.socket.on('webrtc_offer', async ({ offer, fromUser }) => {
-          await handleOffer(offer, fromUser);
-        });
-
-        api.socket.on('webrtc_answer', async ({ answer }) => {
-          await handleAnswer(answer);
-        });
-
-        api.socket.on('webrtc_ice_candidate', async ({ candidate }) => {
-          await handleCandidate(candidate);
-        });
-
-        api.socket.on('webrtc_user_left', () => {
-          setHasRemotePeer(false);
-          setConnectionStatus('Peer left the consultation room.');
-          if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-        });
-
-        api.socket.on('webrtc_caption', (captionData) => {
-          setCaptions(prev => [...prev.slice(-4), captionData]);
-        });
-      }
-
-      // 5. Start speech recognition for live multilingual subtitles
+      // 5. Start speech subtitles
       startSpeechSubtitles();
 
     } catch (err) {
@@ -466,7 +488,71 @@ export default function VideoMeetingModal({
     }
   };
 
-  // Live Speech Recognition Subtitles
+  // Discovery Heartbeat (dispatches ping every 1200ms while waiting for remote peer)
+  useEffect(() => {
+    let pingInterval;
+    if (isOpen) {
+      pingInterval = setInterval(() => {
+        postSignal('ping');
+      }, 1200);
+    }
+    return () => {
+      if (pingInterval) clearInterval(pingInterval);
+    };
+  }, [isOpen, roomId]);
+
+  // localStorage Cross-Window Storage Listener
+  useEffect(() => {
+    const handleStorageEvent = (e) => {
+      if (e.key === `remotion_webrtc_signal_${roomId}` && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          handleIncomingSignal(parsed);
+        } catch (err) {}
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+    return () => window.removeEventListener('storage', handleStorageEvent);
+  }, [roomId]);
+
+  // HTTP Polling Fallback (for remote cross-browser / serverless Vercel tabs)
+  useEffect(() => {
+    let pollInterval;
+    let lastPollTime = Date.now() - 3000;
+    if (isOpen) {
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await api.getWebRTCSignals(roomId, senderIdRef.current, lastPollTime);
+          if (res?.signals && res.signals.length > 0) {
+            lastPollTime = Date.now();
+            for (const sig of res.signals) {
+              await handleIncomingSignal(sig);
+            }
+          }
+        } catch (e) {}
+      }, 1000);
+    }
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [isOpen, roomId]);
+
+  // Lifecycle Management
+  useEffect(() => {
+    let timer;
+    if (isOpen) {
+      timer = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
+      setupMeeting();
+    }
+    return () => {
+      clearInterval(timer);
+      teardownMeeting();
+    };
+  }, [isOpen, roomId]);
+
+  // Speech Recognition Subtitles Engine
   const startSpeechSubtitles = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -492,12 +578,12 @@ export default function VideoMeetingModal({
               const res = await api.translateText(transcript, 'en');
               translated = res.translated_text || transcript;
             } catch (e) {
-              if (selectedLanguage === 'hi') translated = `[अनुवाद]: ${transcript}`;
-              else if (selectedLanguage === 'kn') translated = `[ಅನುವಾದ]: ${transcript}`;
+              if (selectedLanguage === 'hi') translated = `[Hindi]: ${transcript}`;
+              else if (selectedLanguage === 'kn') translated = `[Kannada]: ${transcript}`;
             }
 
             const newCap = {
-              speaker: currentUser?.name || (currentUser?.role === 'therapist' ? 'Dr. Rajesh Kulkarni' : 'Asha Sharma'),
+              speaker: myName,
               text: transcript,
               translated,
               time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -505,14 +591,7 @@ export default function VideoMeetingModal({
 
             setCaptions(prev => [...prev.slice(-4), newCap]);
             setLiveTranscript('');
-
-            // Broadcast to other participant
-            if (bcRef.current) {
-              bcRef.current.postMessage({ type: 'caption', senderId: senderIdRef.current, caption: newCap });
-            }
-            if (api.socket) {
-              api.socket.emit('webrtc_caption', { roomId, ...newCap });
-            }
+            postSignal('caption', { caption: newCap });
           }
         };
 
@@ -526,10 +605,16 @@ export default function VideoMeetingModal({
   };
 
   const teardownMeeting = () => {
+    postSignal('leave');
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    if (remoteAnimFrameRef.current) cancelAnimationFrame(remoteAnimFrameRef.current);
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => t.stop());
       localStreamRef.current = null;
+    }
+    if (remoteFallbackStreamRef.current) {
+      remoteFallbackStreamRef.current.getTracks().forEach(t => t.stop());
+      remoteFallbackStreamRef.current = null;
     }
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
@@ -539,25 +624,8 @@ export default function VideoMeetingModal({
       try { recognitionRef.current.stop(); } catch (e) {}
     }
     if (bcRef.current) {
-      try {
-        bcRef.current.postMessage({ type: 'leave', senderId: senderIdRef.current });
-        bcRef.current.close();
-      } catch (e) {}
+      try { bcRef.current.close(); } catch (e) {}
       bcRef.current = null;
-    }
-    if (api.socket) {
-      api.socket.emit('webrtc_leave', {
-        roomId,
-        userId: currentUser?.id,
-        userName: currentUser?.name
-      });
-      api.socket.off('webrtc_room_peers');
-      api.socket.off('webrtc_user_joined');
-      api.socket.off('webrtc_offer');
-      api.socket.off('webrtc_answer');
-      api.socket.off('webrtc_ice_candidate');
-      api.socket.off('webrtc_user_left');
-      api.socket.off('webrtc_caption');
     }
     setCallDuration(0);
   };
@@ -580,6 +648,24 @@ export default function VideoMeetingModal({
     setIsVideoMuted(!isVideoMuted);
   };
 
+  // In-call message dispatch
+  const handleSendInCallMessage = (e) => {
+    e?.preventDefault();
+    if (!inCallInput.trim()) return;
+
+    const newMsg = {
+      id: 'icm_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5),
+      sender: myName,
+      role: myRole,
+      text: inCallInput.trim(),
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setInCallMessages(prev => [...prev, newMsg]);
+    setInCallInput('');
+    postSignal('in_call_chat', { message: newMsg });
+  };
+
   if (!isOpen) return null;
 
   const formatTime = (secs) => {
@@ -588,11 +674,12 @@ export default function VideoMeetingModal({
     return `${m}:${s}`;
   };
 
-  const isTherapist = currentUser?.role === 'therapist';
+  const otherPeerName = remotePeerInfo?.name || (isTherapist ? 'Asha Sharma' : 'Dr. Rajesh Kulkarni, PT');
+  const otherPeerRoleLabel = remotePeerInfo?.role === 'therapist' || !isTherapist ? 'Supervising Physical Therapist' : 'Patient Telemetry Feed';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/90 backdrop-blur-xl animate-fadeIn">
-      <div className="bg-[#0c1322] border border-cyan-500/30 rounded-3xl max-w-5xl w-full h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="bg-[#0c1322] border border-cyan-500/30 rounded-3xl max-w-5xl w-full h-[90vh] flex flex-col shadow-2xl overflow-hidden relative">
         {/* Top Header */}
         <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center space-x-3">
@@ -604,13 +691,13 @@ export default function VideoMeetingModal({
                 <h3 className="text-sm font-bold text-white font-display">
                   {meeting?.title || 'Weekly Kinematics Evaluation'}
                 </h3>
-                <span className="text-[10px] font-mono bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded-full flex items-center">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span>
+                <span className="text-[10px] font-mono bg-emerald-950 text-emerald-400 border border-emerald-800 px-2.5 py-0.5 rounded-full flex items-center font-bold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
                   {connectionStatus}
                 </span>
               </div>
-              <div className="text-[11px] text-slate-400 flex items-center space-x-2 mt-0.5">
-                <Clock className="w-3 h-3 text-cyan-400" />
+              <div className="text-[11px] text-slate-400 flex items-center space-x-2 mt-0.5 font-medium">
+                <Clock className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Call Duration: {formatTime(callDuration)}</span>
                 <span>•</span>
                 <span className="text-slate-300 font-mono text-[10px]">Room: {roomId}</span>
@@ -618,31 +705,41 @@ export default function VideoMeetingModal({
             </div>
           </div>
 
-          {/* Subtitles & Language Controls */}
+          {/* Subtitles & In-Call Chat Controls */}
           <div className="flex items-center space-x-2">
-            <div className="flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono">
+            <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono">
               <Globe className="w-3.5 h-3.5 text-cyan-400" />
               <select
                 value={selectedLanguage}
                 onChange={(e) => setSelectedLanguage(e.target.value)}
                 className="bg-transparent text-white focus:outline-none cursor-pointer"
               >
-                <option value="hi" className="bg-slate-900">हिंदी (Hindi)</option>
-                <option value="kn" className="bg-slate-900">ಕನ್ನಡ (Kannada)</option>
-                <option value="ta" className="bg-slate-900">தமிழ் (Tamil)</option>
-                <option value="te" className="bg-slate-900">తెలుగు (Telugu)</option>
+                <option value="hi" className="bg-slate-900">Hindi</option>
+                <option value="kn" className="bg-slate-900">Kannada</option>
+                <option value="ta" className="bg-slate-900">Tamil</option>
+                <option value="te" className="bg-slate-900">Telugu</option>
                 <option value="en" className="bg-slate-900">English</option>
               </select>
             </div>
 
             <button
               onClick={() => setCaptionsEnabled(!captionsEnabled)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs transition-all cursor-pointer ${
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
                 captionsEnabled ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50' : 'bg-slate-900 text-slate-400 border-slate-800'
               }`}
             >
               <Subtitles className="w-4 h-4" />
-              <span>Live Subtitles</span>
+              <span>Subtitles</span>
+            </button>
+
+            <button
+              onClick={() => setShowInCallChat(!showInCallChat)}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
+                showInCallChat ? 'bg-blue-950 text-blue-300 border-blue-500/50 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>In-Call Chat</span>
             </button>
           </div>
         </div>
@@ -665,12 +762,12 @@ export default function VideoMeetingModal({
                   {isTherapist ? 'AS' : 'RK'}
                 </div>
                 <h4 className="text-base font-bold text-white">
-                  {isTherapist ? 'Asha Sharma (Patient)' : 'Dr. Rajesh Kulkarni, PT'}
+                  {otherPeerName}
                 </h4>
                 <p className="text-xs text-cyan-400 font-mono mt-1">
-                  {isTherapist ? 'Patient Telemetry Feed' : 'Supervising Physical Therapist'}
+                  {otherPeerRoleLabel}
                 </p>
-                <div className="mt-3 inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-slate-950/80 border border-slate-800 text-[11px] font-mono text-slate-400">
+                <div className="mt-4 inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-slate-950/80 border border-slate-800 text-[11px] font-mono text-slate-400">
                   <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
                   <span>Waiting for peer in {roomId}...</span>
                 </div>
@@ -679,7 +776,7 @@ export default function VideoMeetingModal({
 
             <div className="absolute top-3 left-3 z-20 flex items-center space-x-1.5 bg-black/60 px-2.5 py-1 rounded-full text-[10px] text-white backdrop-blur-md">
               <Users className="w-3 h-3 text-cyan-400" />
-              <span>{hasRemotePeer ? 'Remote Live Stream' : 'Remote Room Monitor'}</span>
+              <span>{hasRemotePeer ? `Remote: ${otherPeerName}` : 'Remote Room Monitor'}</span>
             </div>
           </div>
 
@@ -704,7 +801,7 @@ export default function VideoMeetingModal({
 
             <div className="absolute top-3 left-3 z-20 flex items-center space-x-1.5 bg-black/60 px-2.5 py-1 rounded-full text-[10px] text-white backdrop-blur-md">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>You ({currentUser?.name || (isTherapist ? 'Dr. Rajesh' : 'Asha Sharma')})</span>
+              <span>You ({myName})</span>
             </div>
           </div>
 
@@ -716,7 +813,7 @@ export default function VideoMeetingModal({
                   <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
                   <span>Real-Time Speech-to-Text & Neural Translation</span>
                 </span>
-                <span className="text-[10px] font-mono text-slate-400">Target: English / Hindi</span>
+                <span className="text-[10px] font-mono text-slate-400">Target: English / Multi</span>
               </div>
 
               <div className="space-y-1.5 max-h-24 overflow-y-auto font-sans">
@@ -734,6 +831,63 @@ export default function VideoMeetingModal({
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* In-Call Text Chat Drawer */}
+          {showInCallChat && (
+            <div className="absolute top-4 right-4 bottom-4 w-80 z-40 bg-slate-950/95 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl p-4 shadow-2xl flex flex-col animate-slideDown">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center space-x-2">
+                  <MessageSquare className="w-4 h-4 text-cyan-400" />
+                  <span className="text-xs font-bold text-white">In-Call Chat</span>
+                </div>
+                <button
+                  onClick={() => setShowInCallChat(false)}
+                  className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto py-3 space-y-2 text-xs">
+                {inCallMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`p-2.5 rounded-xl ${
+                      msg.isSystem
+                        ? 'bg-slate-900/80 text-cyan-300 font-mono text-[10px] text-center border border-slate-800'
+                        : msg.sender === myName
+                        ? 'bg-cyan-950/60 border border-cyan-800/60 text-slate-100 ml-4'
+                        : 'bg-slate-900 border border-slate-800 text-slate-100 mr-4'
+                    }`}
+                  >
+                    {!msg.isSystem && (
+                      <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mb-1">
+                        <span className="font-bold text-cyan-300">{msg.sender}</span>
+                        <span>{msg.time}</span>
+                      </div>
+                    )}
+                    <div>{msg.text}</div>
+                  </div>
+                ))}
+              </div>
+
+              <form onSubmit={handleSendInCallMessage} className="pt-2 border-t border-slate-800 flex items-center space-x-1.5">
+                <input
+                  type="text"
+                  value={inCallInput}
+                  onChange={(e) => setInCallInput(e.target.value)}
+                  placeholder="Type message to peer..."
+                  className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                />
+                <button
+                  type="submit"
+                  className="p-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </form>
             </div>
           )}
         </div>

@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-[#080c14] text-slate-100 font-sans antialiased selection:bg-cyan-500/30 selection:text-cyan-200 overflow-x-hidden;
+    @apply font-sans antialiased overflow-x-hidden;
   }
 }
 

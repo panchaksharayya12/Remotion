@@ -50,6 +50,14 @@ export default function App() {
     setCurrentPortal('signin');
   };
 
+  // Demo Portal & Role Switcher for instant testing
+  const handleSwitchRole = (targetRole) => {
+    const newUser = api.switchDemoRole(targetRole);
+    setCurrentUser(newUser);
+    setPreviewMode(null);
+    routeByRole(newUser.role);
+  };
+
   // Safe navigation with Role-Based Route Protection
   const handleNavigatePortal = (targetPortal) => {
     if (!currentUser) {
@@ -112,8 +120,18 @@ export default function App() {
     );
   }
 
+  const portalThemeClass = {
+    patient: 'bg-[#f0fdfa] text-slate-900 selection:bg-teal-500/20 selection:text-teal-900',
+    therapist: 'bg-[#f1f5f9] text-slate-900 selection:bg-blue-200',
+    admin: 'bg-[#070b14] text-slate-100 selection:bg-purple-500/30 selection:text-purple-200',
+    gaming: 'bg-[#070b14] text-slate-100 selection:bg-cyan-500/30 selection:text-cyan-200',
+    explorer: 'bg-[#070b14] text-slate-100 selection:bg-cyan-500/30 selection:text-cyan-200',
+    signin: 'bg-[#070b14] text-slate-100',
+    register: 'bg-[#070b14] text-slate-100'
+  }[currentPortal] || 'bg-[#070b14] text-slate-100';
+
   return (
-    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className={`min-h-screen ${portalThemeClass} flex flex-col font-sans transition-colors duration-200`}>
       {/* Admin Preview Mode Alert Banner */}
       {previewMode && currentUser?.role === 'admin' && (
         <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-bold flex items-center justify-between sticky top-0 z-50 shadow-md">
@@ -140,6 +158,7 @@ export default function App() {
       <Navbar
         currentPortal={currentPortal}
         setCurrentPortal={handleNavigatePortal}
+        onSwitchRole={handleSwitchRole}
         currentUser={currentUser}
         onOpenAuth={() => {}}
         onOpenHeadsetModal={() => setIsHeadsetOpen(true)}
@@ -180,13 +199,19 @@ export default function App() {
       </main>
 
       {/* Permanent Academic Disclaimer Footer across all authenticated portals */}
-      <footer className="w-full bg-slate-950/90 border-t border-slate-900 py-4 px-4 text-center text-xs text-slate-500 font-mono">
+      <footer className={`w-full py-4 px-4 text-center text-xs font-mono transition-colors ${
+        currentPortal === 'patient'
+          ? 'bg-white border-t border-slate-200 text-slate-700'
+          : currentPortal === 'therapist'
+          ? 'bg-[#152a45] border-t border-blue-900/60 text-blue-200'
+          : 'bg-slate-950/90 border-t border-slate-900 text-slate-400'
+      }`}>
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center space-x-2">
-            <ShieldCheck className="w-4 h-4 text-cyan-500/70" />
+            <ShieldCheck className={`w-4 h-4 ${currentPortal === 'patient' ? 'text-teal-600' : 'text-cyan-400'}`} />
             <span>Prototype - synthetic demo data - not a medical device. Built for academic research and motor rehabilitation support.</span>
           </div>
-          <div className="text-[11px] text-slate-600">
+          <div className={`text-[11px] ${currentPortal === 'patient' ? 'text-slate-500' : 'text-slate-400'}`}>
             ReMotion AR/VR XR2 • Multi-Portal Platform
           </div>
         </div>

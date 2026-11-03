@@ -156,8 +156,8 @@ const CLINICAL_DATASETS = {
 
 class ApiService {
   constructor() {
-    this.token = localStorage.getItem('remotion_token') || null;
-    this.user = JSON.parse(localStorage.getItem('remotion_user') || 'null');
+    this.token = sessionStorage.getItem('remotion_token') || localStorage.getItem('remotion_token') || null;
+    this.user = JSON.parse(sessionStorage.getItem('remotion_user') || localStorage.getItem('remotion_user') || 'null');
     this.socket = null;
     this.initSocket();
   }
@@ -188,6 +188,8 @@ class ApiService {
     this.token = token;
     this.user = user;
     if (token) {
+      sessionStorage.setItem('remotion_token', token);
+      sessionStorage.setItem('remotion_user', JSON.stringify(user));
       localStorage.setItem('remotion_token', token);
       localStorage.setItem('remotion_user', JSON.stringify(user));
       if (this.socket && this.socket.connected) {
@@ -199,9 +201,22 @@ class ApiService {
         });
       }
     } else {
+      sessionStorage.removeItem('remotion_token');
+      sessionStorage.removeItem('remotion_user');
       localStorage.removeItem('remotion_token');
       localStorage.removeItem('remotion_user');
     }
+  }
+
+  switchDemoRole(role) {
+    const email = role === 'therapist' ? 'therapist@remotion.health' :
+                  role === 'admin' ? 'admin@remotion.health' :
+                  role === 'explorer' || role === 'gaming' ? 'guest@remotion.health' :
+                  'patient@remotion.health';
+    const matched = CLINICAL_DATASETS.users[email] || CLINICAL_DATASETS.users['patient@remotion.health'];
+    const token = 'tok_demo_' + role + '_' + Date.now();
+    this.setAuth(token, matched);
+    return matched;
   }
 
   getFallbackData(endpoint, options = {}) {
@@ -318,6 +333,52 @@ class ApiService {
 
     if (endpoint === '/patient/sessions') {
       return { success: true, session_id: 'sess_' + Date.now(), xp_gained: 65, new_xp: 545, new_level: 4 };
+    }
+
+    if (endpoint.startsWith('/messages')) {
+      if (options.method === 'POST') {
+        const msg = {
+          id: 'msg_' + Date.now().toString(36),
+          sender_id: this.user?.id || 'u_therapist_1',
+          sender_name: this.user?.name || 'Dr. Rajesh Kulkarni, PT',
+          receiver_id: body.receiver_id || 'u_patient_1',
+          message_text: body.message_text || '',
+          translated_text: body.message_text || '',
+          created_at: new Date().toISOString()
+        };
+        try {
+          const stored = JSON.parse(localStorage.getItem('remotion_clinical_chat_messages') || '[]');
+          stored.push(msg);
+          localStorage.setItem('remotion_clinical_chat_messages', JSON.stringify(stored));
+        } catch (e) {}
+        return { success: true, message: msg };
+      }
+      try {
+        const stored = JSON.parse(localStorage.getItem('remotion_clinical_chat_messages') || 'null');
+        if (stored) return { messages: stored };
+      } catch (e) {}
+      return {
+        messages: [
+          {
+            id: 'msg_1',
+            sender_id: 'u_therapist_1',
+            sender_name: 'Dr. Rajesh Kulkarni, PT',
+            receiver_id: 'u_patient_1',
+            message_text: 'Good morning Asha. Please focus on slow, controlled finger release during Squeeze & Fill.',
+            translated_text: 'सुप्रभात आशा। कृपया निचोड़ें और भरें के दौरान धीमी, नियंत्रित उंगली छोड़ने पर ध्यान दें।',
+            created_at: new Date(Date.now() - 7200000).toISOString()
+          },
+          {
+            id: 'msg_2',
+            sender_id: 'u_patient_1',
+            sender_name: 'Asha Sharma',
+            receiver_id: 'u_therapist_1',
+            message_text: 'Thank you doctor, I felt much less fatigue in my fingers today.',
+            translated_text: 'धन्यवाद डॉक्टर, आज मुझे अपनी उंगलियों में बहुत कम थकान महसूस हुई।',
+            created_at: new Date(Date.now() - 3600000).toISOString()
+          }
+        ]
+      };
     }
 
     return undefined;
@@ -529,6 +590,25 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify(meetingData)
     });
+  }
+
+  async sendWebRTCSignal(signalData) {
+    try {
+      return await this.request('/webrtc/signal', {
+        method: 'POST',
+        body: JSON.stringify(signalData)
+      });
+    } catch (e) {
+      return { success: false };
+    }
+  }
+
+  async getWebRTCSignals(roomId, excludeSender, since = 0) {
+    try {
+      return await this.request(`/webrtc/signal?roomId=${encodeURIComponent(roomId)}&excludeSender=${encodeURIComponent(excludeSender)}&since=${since}`);
+    } catch (e) {
+      return { success: false, signals: [] };
+    }
   }
 }
 

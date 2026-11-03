@@ -66,6 +66,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
   const [realtimeNotice, setRealtimeNotice] = useState(null);
   const [isGuidedRoutineActive, setIsGuidedRoutineActive] = useState(false);
   const [guidedStep, setGuidedStep] = useState(0);
+  const syncChannelRef = useRef(null);
 
   // Fetch initial patient data
   const loadDashboard = async () => {
@@ -111,9 +112,34 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
     try {
       const res = await api.sendMessage(therapistId, text.trim(), chatLanguage, 'en');
-      if (res.message) {
-        setChatMessages(prev => [...prev, res.message]);
+      const sentMsg = res?.message || {
+        id: 'msg_' + Date.now().toString(36),
+        sender_id: 'u_patient_1',
+        sender_name: 'Asha Sharma',
+        receiver_id: therapistId,
+        message_text: text.trim(),
+        translated_text: text.trim(),
+        created_at: new Date().toISOString()
+      };
+      setChatMessages(prev => [...prev.filter(m => m.id !== sentMsg.id), sentMsg]);
+
+      // Broadcast immediately across tabs to Therapist Portal
+      if (syncChannelRef.current) {
+        try {
+          syncChannelRef.current.postMessage({
+            type: 'CHAT_MESSAGE',
+            message: sentMsg
+          });
+        } catch (e) {}
       }
+      try {
+        localStorage.setItem('remotion_chat_sync_signal', JSON.stringify({
+          type: 'CHAT_MESSAGE',
+          message: sentMsg,
+          timestamp: Date.now()
+        }));
+      } catch (e) {}
+
       if (!textOverride) setChatInput('');
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -156,29 +182,29 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       therapist_name: dashboardData?.patient?.therapist_name || 'Dr. Rajesh Kulkarni, PT',
       scheduled_time: meetingData?.scheduled_time || 'Now (Live Immediate Telehealth)',
       duration_minutes: meetingData?.duration_minutes || 30,
-      room_id: meetingData?.room_id || `remotion-room-${ptId}`,
+      room_id: meetingData?.room_id || `remotion-room-pt_1`,
       notes: meetingData?.notes || 'Clinical consultation'
     };
 
     // 1. Immediately launch modal locally in Patient portal
     setSelectedMeeting(meeting);
 
-    // 2. Broadcast immediately to Therapist portal via BroadcastChannel (<1ms cross-window sync)
-    try {
-      const syncChannel = new BroadcastChannel('remotion_telehealth_sync');
-      syncChannel.postMessage({
-        type: 'IMMEDIATE_START_CALL',
-        callerRole: 'patient',
-        callerName: ptName,
-        meeting,
-        timestamp: Date.now()
-      });
-      syncChannel.close();
-    } catch (e) {
-      console.warn('BroadcastChannel error:', e);
+    // 2. Broadcast immediately to Therapist portal via persistent BroadcastChannel (WITHOUT closing)
+    if (syncChannelRef.current) {
+      try {
+        syncChannelRef.current.postMessage({
+          type: 'IMMEDIATE_START_CALL',
+          callerRole: 'patient',
+          callerName: ptName,
+          meeting,
+          timestamp: Date.now()
+        });
+      } catch (e) {
+        console.warn('BroadcastChannel error:', e);
+      }
     }
 
-    // 3. Trigger localStorage storage event fallback
+    // 3. Trigger localStorage storage event fallback (<1ms cross-window)
     try {
       localStorage.setItem('remotion_telehealth_call_signal', JSON.stringify({
         type: 'IMMEDIATE_START_CALL',
@@ -205,7 +231,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
   // Real-time listener for instant cross-portal call synchronization & Socket.IO updates
   useEffect(() => {
-    // 1. Cross-tab BroadcastChannel listener for instant dual-start
+    // 1. Persistent BroadcastChannel listener for instant dual-start
     const handleTelehealthMessage = (event) => {
       const data = event.data;
       if (!data) return;
@@ -219,13 +245,15 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
         setRealtimeNotice(`New video consultation scheduled: ${data.appointment.title}`);
         setTimeout(() => setRealtimeNotice(null), 6000);
+      } else if (data.type === 'CHAT_MESSAGE' && data.message) {
+        setChatMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
       }
     };
 
-    let syncChannel = null;
     try {
-      syncChannel = new BroadcastChannel('remotion_telehealth_sync');
-      syncChannel.onmessage = handleTelehealthMessage;
+      const bc = new BroadcastChannel('remotion_telehealth_sync');
+      syncChannelRef.current = bc;
+      bc.onmessage = handleTelehealthMessage;
     } catch (e) {}
 
     // 2. Cross-tab localStorage fallback listener
@@ -236,6 +264,13 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
           if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
             playRingChime();
             setSelectedMeeting(data.meeting);
+          }
+        } catch (err) {}
+      } else if (e.key === 'remotion_chat_sync_signal' && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          if (data.type === 'CHAT_MESSAGE' && data.message) {
+            setChatMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
           }
         } catch (err) {}
       }
@@ -304,7 +339,10 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     }
 
     return () => {
-      if (syncChannel) syncChannel.close();
+      if (syncChannelRef.current) {
+        try { syncChannelRef.current.close(); } catch (e) {}
+        syncChannelRef.current = null;
+      }
       window.removeEventListener('storage', handleStorageEvent);
       if (api.socket) {
         if (handlePrescriptionCreated) api.socket.off('prescription_created', handlePrescriptionCreated);
@@ -607,9 +645,9 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                   </div>
 
                   <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1 font-mono">
-                    <div className="text-slate-400 text-[10px] uppercase font-bold">NEXT APPOINTMENT:</div>
-                    <div className="font-bold text-slate-800 flex items-center space-x-1.5">
-                      <Clock className="w-3.5 h-3.5 text-teal-600" />
+                    <div className="text-slate-700 text-[10px] uppercase font-bold">NEXT APPOINTMENT:</div>
+                    <div className="font-bold text-slate-900 flex items-center space-x-1.5">
+                      <Clock className="w-3.5 h-3.5 text-teal-700" />
                       <span>Tomorrow, 10:30 AM (Tele-Consult)</span>
                     </div>
                   </div>
@@ -618,17 +656,17 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                 <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
                   <button
                     onClick={() => setActiveTab('chat')}
-                    className="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                    className="w-full py-2.5 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
                     <span>Message Dr. Rajesh</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('appointments')}
-                    className="w-full py-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 font-semibold text-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer"
+                    className="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs transition-colors flex items-center justify-center space-x-1.5 cursor-pointer border border-slate-200"
                   >
-                    <Video className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Appointments</span>
+                    <Video className="w-3.5 h-3.5 text-slate-700" />
+                    <span>View Appointments & Telehealth</span>
                   </button>
                 </div>
               </div>
@@ -929,7 +967,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             {/* Chat Message Scrollable Feed */}
             <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-4 bg-slate-50">
               {chatMessages.length === 0 ? (
-                <div className="text-center py-12 text-slate-400 font-mono text-xs">
+                <div className="text-center py-12 text-slate-600 font-mono text-xs">
                   No previous messages. Send your first update to Dr. Rajesh below!
                 </div>
               ) : (
@@ -943,8 +981,8 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                       <div
                         className={`max-w-md p-4 rounded-2xl shadow-sm text-xs leading-relaxed ${
                           isPatient
-                            ? 'bg-teal-600 text-white rounded-br-none'
-                            : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none'
+                            ? 'bg-teal-700 text-white rounded-br-none'
+                            : 'bg-white text-slate-900 border border-slate-200 rounded-bl-none'
                         }`}
                       >
                         <div className="font-medium">{msg.message_text}</div>
@@ -952,14 +990,14 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                         {/* Translated text if available */}
                         {msg.translated_text && msg.translated_text !== msg.message_text && (
                           <div className={`mt-2 pt-2 border-t text-[11px] font-mono ${
-                            isPatient ? 'border-teal-500/50 text-teal-100' : 'border-slate-100 text-slate-500'
+                            isPatient ? 'border-teal-500/50 text-teal-100' : 'border-slate-200 text-slate-700 font-semibold'
                           }`}>
                             <span className="text-[9px] uppercase tracking-wider block opacity-75">Translation:</span>
                             {msg.translated_text}
                           </div>
                         )}
                       </div>
-                      <span className="text-[10px] text-slate-400 font-mono mt-1 px-1">
+                      <span className="text-[10px] text-slate-600 font-mono mt-1 px-1 font-semibold">
                         {isPatient ? 'You' : 'Dr. Rajesh'} • {new Date(msg.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
@@ -970,7 +1008,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
             {/* Quick Response Chips */}
             <div className="px-4 py-2 bg-white border-t border-slate-100 flex items-center space-x-2 overflow-x-auto scrollbar-none">
-              <span className="text-[10px] font-mono text-slate-400 shrink-0">Quick Update:</span>
+              <span className="text-[10px] font-mono text-slate-700 font-bold shrink-0">Quick Update:</span>
               {[
                 'Completed today\'s Squeeze & Fill sets!',
                 'Feeling less fatigue during reaching.',
@@ -980,7 +1018,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                 <button
                   key={idx}
                   onClick={() => handleSendChatMessage(chip)}
-                  className="px-3 py-1 rounded-full bg-slate-100 hover:bg-teal-50 hover:text-teal-700 text-slate-600 text-[11px] whitespace-nowrap transition-colors border border-slate-200 shrink-0"
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-800 text-[11px] font-medium whitespace-nowrap cursor-pointer transition-colors"
                 >
                   {chip}
                 </button>
@@ -1049,15 +1087,15 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900 font-display">Clinical Appointments & Telehealth</h2>
-                <p className="text-xs text-slate-500 mt-1">Scheduled video consultations and check-ins with Dr. Rajesh Kulkarni.</p>
+                <p className="text-sm text-slate-700 font-medium mt-1">Scheduled video consultations and check-ins with Dr. Rajesh Kulkarni.</p>
               </div>
 
               <button
                 onClick={() => joinImmediateCall({
                   title: 'Immediate Clinical Video Consultation',
-                  room_id: `remotion-room-${patient?.id || 'pt_1'}`
+                  room_id: `remotion-room-pt_1`
                 })}
-                className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md shadow-teal-600/20 flex items-center justify-center space-x-2 cursor-pointer self-start sm:self-auto"
+                className="px-5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs shadow-md shadow-teal-700/20 flex items-center justify-center space-x-2 cursor-pointer self-start sm:self-auto"
               >
                 <Video className="w-4 h-4" />
                 <span>Start Video Call Now</span>
@@ -1074,24 +1112,24 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                     <div>
                       <div className="flex items-center space-x-2">
                         <h4 className="font-bold text-slate-900 text-sm">{appt.title}</h4>
-                        <span className="text-[10px] font-mono bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded-full font-bold">
+                        <span className="text-[10px] font-mono bg-teal-100 text-teal-900 border border-teal-300 px-2 py-0.5 rounded-full font-bold">
                           {appt.duration_minutes || 30} MINS
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 mt-0.5">
+                      <p className="text-xs text-slate-700 font-semibold mt-1">
                         {appt.therapist_name || 'Dr. Rajesh Kulkarni, PT'} • Telehealth Video Session
                       </p>
-                      <div className="text-xs text-teal-700 font-mono font-semibold mt-1 flex items-center space-x-1.5">
-                        <Clock className="w-3.5 h-3.5" />
+                      <div className="text-xs text-teal-900 bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-lg font-mono font-bold mt-1.5 inline-flex items-center space-x-1.5">
+                        <Clock className="w-3.5 h-3.5 text-teal-700" />
                         <span>{appt.scheduled_time}</span>
                       </div>
                       {appt.notes && (
-                        <p className="text-xs text-slate-600 mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100 max-w-xl">
+                        <p className="text-xs text-slate-700 mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 max-w-xl font-medium">
                           {appt.notes}
                         </p>
                       )}
-                      <div className="text-[10px] font-mono text-slate-400 mt-1">
-                        Room: {appt.room_id || `remotion-room-${patient?.id || 'pt_1'}`}
+                      <div className="text-[11px] font-mono text-slate-600 font-semibold mt-1.5">
+                        Room ID: {appt.room_id || 'remotion-room-pt_1'}
                       </div>
                     </div>
                   </div>
@@ -1099,12 +1137,12 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                   <div className="flex flex-col items-end space-y-1.5">
                     <button
                       onClick={() => joinImmediateCall(appt)}
-                      className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md shadow-teal-600/20 flex items-center justify-center space-x-2 cursor-pointer w-full sm:w-auto"
+                      className="px-5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs shadow-md shadow-teal-700/20 flex items-center justify-center space-x-2 cursor-pointer w-full sm:w-auto"
                     >
                       <Video className="w-4 h-4" />
                       <span>Join Video Call</span>
                     </button>
-                    <span className="text-[10px] font-mono text-emerald-600 font-medium">● Instant Dual-Start Sync</span>
+                    <span className="text-[10px] font-mono text-emerald-700 font-bold">Dual-Start Telehealth Sync</span>
                   </div>
                 </div>
               ))}
@@ -1194,20 +1232,20 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
             <div className="grid grid-cols-2 gap-4 text-xs font-mono">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-slate-400 text-[10px] block uppercase">AFFECTED SIDE</span>
-                <span className="font-bold text-slate-800 capitalize">{patient.affected_side || 'Left'} Arm</span>
+                <span className="text-slate-700 text-[10px] block font-bold uppercase">AFFECTED SIDE</span>
+                <span className="font-bold text-slate-900 capitalize">{patient.affected_side || 'Left'} Arm</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-slate-400 text-[10px] block uppercase">RECOVERY STAGE</span>
-                <span className="font-bold text-slate-800">{patient.recovery_level || 'Stage 4 Intermediate'}</span>
+                <span className="text-slate-700 text-[10px] block font-bold uppercase">RECOVERY STAGE</span>
+                <span className="font-bold text-slate-900">{patient.recovery_level || 'Stage 4 Intermediate'}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-slate-400 text-[10px] block uppercase">PRIMARY LANGUAGE</span>
-                <span className="font-bold text-slate-800 uppercase">{patient.primary_language || 'Hindi (hi)'}</span>
+                <span className="text-slate-700 text-[10px] block font-bold uppercase">PRIMARY LANGUAGE</span>
+                <span className="font-bold text-slate-900 uppercase">{patient.primary_language || 'Hindi (hi)'}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <span className="text-slate-400 text-[10px] block uppercase">EMERGENCY CONTACT</span>
-                <span className="font-bold text-slate-800">{patient.emergency_contact || '+91 98450 99991'}</span>
+                <span className="text-slate-700 text-[10px] block font-bold uppercase">EMERGENCY CONTACT</span>
+                <span className="font-bold text-slate-900">{patient.emergency_contact || '+91 98450 99991'}</span>
               </div>
             </div>
           </div>

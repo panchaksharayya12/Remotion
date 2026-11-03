@@ -1448,6 +1448,36 @@ app.post('/api/meetings', authenticateToken, async (req, res) => {
   }
 });
 
+// In-memory WebRTC Signals for HTTP polling fallback
+let SERVER_WEBRTC_SIGNALS = [];
+
+app.post('/api/webrtc/signal', (req, res) => {
+  const { roomId = 'remotion-room-pt_1', senderId = 'peer', type = 'ping', data = null, userName = '', role = '' } = req.body;
+  const signalEntry = {
+    id: 'sig_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+    roomId,
+    senderId,
+    type,
+    data,
+    userName,
+    role,
+    timestamp: Date.now()
+  };
+  SERVER_WEBRTC_SIGNALS.push(signalEntry);
+  if (SERVER_WEBRTC_SIGNALS.length > 250) SERVER_WEBRTC_SIGNALS.shift();
+  res.json({ success: true, signal: signalEntry });
+});
+
+app.get('/api/webrtc/signal', (req, res) => {
+  const targetRoomId = req.query.roomId || 'remotion-room-pt_1';
+  const excludeSender = req.query.excludeSender || '';
+  const since = parseInt(req.query.since || '0', 10);
+  const matched = SERVER_WEBRTC_SIGNALS.filter(
+    s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp > since
+  );
+  res.json({ success: true, signals: matched });
+});
+
 // ==========================================
 // 8. SOCKET.IO REAL-TIME CHANNELS & WEBRTC
 // ==========================================
