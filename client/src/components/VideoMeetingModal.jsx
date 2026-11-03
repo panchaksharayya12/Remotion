@@ -44,6 +44,10 @@ export default function VideoMeetingModal({
   const animFrameRef = useRef(null);
   const candidateQueueRef = useRef([]);
 
+  // Multi-channel local BroadcastChannel for zero-latency cross-tab WebRTC signaling
+  const senderIdRef = useRef('peer_' + Math.random().toString(36).substring(2, 9));
+  const bcRef = useRef(null);
+
   // Standardized clinical room ID
   const roomId = meeting?.room_id || 'remotion-room-pt_1';
   const isPolite = currentUser?.role === 'patient'; // Patient acts as polite peer in case of glare
@@ -218,12 +222,36 @@ export default function VideoMeetingModal({
         }
       };
 
+      // Helper to flush queued ICE candidates
+      const drainIceCandidates = async () => {
+        while (candidateQueueRef.current.length > 0) {
+          const cand = candidateQueueRef.current.shift();
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch (e) {
+            console.warn('[WebRTC] Error adding queued ICE candidate:', e);
+          }
+        }
+      };
+
+      // Handle ICE Candidates generated locally
       pc.onicecandidate = (event) => {
-        if (event.candidate && api.socket) {
-          api.socket.emit('webrtc_ice_candidate', {
-            roomId,
-            candidate: event.candidate
-          });
+        if (event.candidate) {
+          // Send via BroadcastChannel (local cross-window)
+          if (bcRef.current) {
+            bcRef.current.postMessage({
+              type: 'candidate',
+              senderId: senderIdRef.current,
+              candidate: event.candidate
+            });
+          }
+          // Send via Socket.IO (network)
+          if (api.socket) {
+            api.socket.emit('webrtc_ice_candidate', {
+              roomId,
+              candidate: event.candidate
+            });
+          }
         }
       };
 
@@ -238,21 +266,135 @@ export default function VideoMeetingModal({
         }
       };
 
-      // Helper to flush queued ICE candidates
-      const drainIceCandidates = async () => {
-        while (candidateQueueRef.current.length > 0) {
-          const cand = candidateQueueRef.current.shift();
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(cand));
-          } catch (e) {
-            console.warn('[WebRTC] Error adding queued ICE candidate:', e);
+      // Common helper for incoming offer
+      const handleOffer = async (offer, fromUser) => {
+        try {
+          const offerCollision = (pc.signalingState !== 'stable');
+          if (offerCollision) {
+            if (!isPolite) {
+              console.log('[WebRTC] Ignoring offer due to collision (impolite peer)');
+              return;
+            }
+            console.log('[WebRTC] Rolling back due to collision (polite peer)');
+            await pc.setLocalDescription({ type: 'rollback' });
           }
+
+          await pc.setRemoteDescription(new RTCSessionDescription(offer));
+          await drainIceCandidates();
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          // Broadcast answer locally
+          if (bcRef.current) {
+            bcRef.current.postMessage({
+              type: 'answer',
+              senderId: senderIdRef.current,
+              answer
+            });
+          }
+          // Emit answer via Socket.IO
+          if (api.socket) {
+            api.socket.emit('webrtc_answer', {
+              roomId,
+              answer
+            });
+          }
+
+          setHasRemotePeer(true);
+          setConnectionStatus(`Connected to ${fromUser || 'Peer'}`);
+        } catch (err) {
+          console.error('[WebRTC] Error answering offer:', err);
         }
       };
 
-      // 3. Socket.IO Signaling Handlers
+      // Common helper for incoming answer
+      const handleAnswer = async (answer) => {
+        try {
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            await drainIceCandidates();
+            setHasRemotePeer(true);
+            setConnectionStatus('P2P Direct Video Stream Connected');
+          }
+        } catch (err) {
+          console.error('[WebRTC] Error setting answer:', err);
+        }
+      };
+
+      // Common helper for incoming candidate
+      const handleCandidate = async (candidate) => {
+        try {
+          if (candidate) {
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } else {
+              candidateQueueRef.current.push(candidate);
+            }
+          }
+        } catch (err) {
+          console.warn('[WebRTC] ICE candidate error:', err);
+        }
+      };
+
+      // 3. Setup BroadcastChannel for Instant Zero-Lag Cross-Tab / Cross-Window Signaling
+      try {
+        const bc = new BroadcastChannel(`remotion_webrtc_channel_${roomId}`);
+        bcRef.current = bc;
+
+        bc.onmessage = async (e) => {
+          const data = e.data;
+          if (!data || data.senderId === senderIdRef.current) return; // Ignore own messages
+
+          if (data.type === 'offer') {
+            await handleOffer(data.offer, data.fromUser);
+          } else if (data.type === 'answer') {
+            await handleAnswer(data.answer);
+          } else if (data.type === 'candidate') {
+            await handleCandidate(data.candidate);
+          } else if (data.type === 'join') {
+            console.log('[BroadcastChannel] Peer joined:', data.userName);
+            setConnectionStatus(`${data.userName || 'Peer'} connected. Establishing video link...`);
+            // Create offer to newcomer
+            try {
+              if (pc.signalingState === 'stable') {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                bc.postMessage({
+                  type: 'offer',
+                  senderId: senderIdRef.current,
+                  offer,
+                  fromUser: currentUser?.name || 'Peer'
+                });
+                if (api.socket) {
+                  api.socket.emit('webrtc_offer', { roomId, offer, fromUser: currentUser?.name });
+                }
+              }
+            } catch (err) {
+              console.warn('Error offering via broadcast channel:', err);
+            }
+          } else if (data.type === 'caption') {
+            setCaptions(prev => [...prev.slice(-4), data.caption]);
+          } else if (data.type === 'leave') {
+            setHasRemotePeer(false);
+            setConnectionStatus('Peer left the consultation room.');
+            if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+          }
+        };
+
+        // Notify room that this peer joined
+        bc.postMessage({
+          type: 'join',
+          senderId: senderIdRef.current,
+          userName: currentUser?.name || (currentUser?.role === 'therapist' ? 'Dr. Rajesh Kulkarni' : 'Asha Sharma'),
+          role: currentUser?.role || 'patient'
+        });
+      } catch (bcErr) {
+        console.warn('BroadcastChannel initialization error:', bcErr);
+      }
+
+      // 4. Socket.IO Signaling Handlers (for multi-device / network peers)
       if (api.socket) {
-        // Emit join room
         api.socket.emit('webrtc_join', {
           roomId,
           userId: currentUser?.id || 'usr_' + Date.now(),
@@ -260,135 +402,62 @@ export default function VideoMeetingModal({
           role: currentUser?.role || 'patient'
         });
 
-        // Trigger call alert so other portal rings
-        api.socket.emit('webrtc_call_alert', {
-          targetRole: currentUser?.role === 'patient' ? 'therapist' : 'patient',
-          callerName: currentUser?.name || (currentUser?.role === 'therapist' ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma (Patient)'),
-          roomId,
-          meetingTitle: meeting?.title || 'Weekly Kinematics Evaluation'
-        });
-
-        // If existing peers are in room, wait for offer or initiate after brief grace period
         api.socket.on('webrtc_room_peers', async ({ peers }) => {
           if (peers && peers.length > 0) {
-            console.log('[WebRTC] Existing peers in room:', peers);
-            setConnectionStatus('Peer in room. Establishing connection...');
-            // Newcomer will wait 1.5s for existing peer's offer. If none arrives, newcomer initiates:
+            setConnectionStatus('Peer in room. Negotiating stream...');
             setTimeout(async () => {
               if (pc.signalingState === 'stable' && !hasRemotePeer) {
                 try {
                   const offer = await pc.createOffer();
                   await pc.setLocalDescription(offer);
-                  api.socket.emit('webrtc_offer', {
-                    roomId,
-                    offer,
-                    fromUser: currentUser?.name || 'Caller'
-                  });
-                } catch (e) {
-                  console.warn('Fallback offer error:', e);
-                }
+                  api.socket.emit('webrtc_offer', { roomId, offer, fromUser: currentUser?.name || 'Caller' });
+                  if (bcRef.current) {
+                    bcRef.current.postMessage({ type: 'offer', senderId: senderIdRef.current, offer, fromUser: currentUser?.name });
+                  }
+                } catch (e) {}
               }
-            }, 1500);
+            }, 1200);
           } else {
             setConnectionStatus('Waiting for other participant to join...');
           }
         });
 
-        // When another participant joins my room, initiate offer to them
         api.socket.on('webrtc_user_joined', async (data) => {
-          console.log('[WebRTC] Participant joined room:', data);
-          setConnectionStatus(`${data.userName || 'Peer'} joined. Negotiating stream...`);
+          setConnectionStatus(`${data.userName || 'Peer'} joined. Establishing direct stream...`);
           try {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            api.socket.emit('webrtc_offer', {
-              roomId,
-              offer,
-              toSocketId: data.socketId,
-              fromUser: currentUser?.name || 'Host'
-            });
-          } catch (err) {
-            console.error('[WebRTC] Error creating offer for newcomer:', err);
-          }
-        });
-
-        // Handle incoming Offer with perfect glare negotiation
-        api.socket.on('webrtc_offer', async ({ offer, fromSocketId, fromUser }) => {
-          console.log('[WebRTC] Received offer from:', fromUser);
-          try {
-            const offerCollision = (pc.signalingState !== 'stable');
-            if (offerCollision) {
-              if (!isPolite) {
-                console.log('[WebRTC] Ignoring offer due to collision (impolite peer)');
-                return;
-              }
-              console.log('[WebRTC] Rolling back due to collision (polite peer)');
-              await pc.setLocalDescription({ type: 'rollback' });
+            api.socket.emit('webrtc_offer', { roomId, offer, toSocketId: data.socketId, fromUser: currentUser?.name || 'Host' });
+            if (bcRef.current) {
+              bcRef.current.postMessage({ type: 'offer', senderId: senderIdRef.current, offer, fromUser: currentUser?.name });
             }
-
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-            await drainIceCandidates();
-
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            api.socket.emit('webrtc_answer', {
-              roomId,
-              answer,
-              toSocketId: fromSocketId
-            });
-            setHasRemotePeer(true);
-            setConnectionStatus(`Connected to ${fromUser || 'Peer'}`);
-          } catch (err) {
-            console.error('[WebRTC] Error answering offer:', err);
-          }
+          } catch (err) {}
         });
 
-        // Handle incoming Answer
+        api.socket.on('webrtc_offer', async ({ offer, fromUser }) => {
+          await handleOffer(offer, fromUser);
+        });
+
         api.socket.on('webrtc_answer', async ({ answer }) => {
-          console.log('[WebRTC] Received answer');
-          try {
-            if (pc.signalingState === 'have-local-offer') {
-              await pc.setRemoteDescription(new RTCSessionDescription(answer));
-              await drainIceCandidates();
-              setHasRemotePeer(true);
-              setConnectionStatus('P2P Direct Video Stream Connected');
-            }
-          } catch (err) {
-            console.error('[WebRTC] Error setting answer:', err);
-          }
+          await handleAnswer(answer);
         });
 
-        // Handle ICE Candidates
         api.socket.on('webrtc_ice_candidate', async ({ candidate }) => {
-          try {
-            if (candidate) {
-              if (pc.remoteDescription && pc.remoteDescription.type) {
-                await pc.addIceCandidate(new RTCIceCandidate(candidate));
-              } else {
-                candidateQueueRef.current.push(candidate);
-              }
-            }
-          } catch (err) {
-            console.warn('[WebRTC] ICE candidate error:', err);
-          }
+          await handleCandidate(candidate);
         });
 
-        // When a peer leaves
         api.socket.on('webrtc_user_left', () => {
           setHasRemotePeer(false);
           setConnectionStatus('Peer left the consultation room.');
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = null;
-          }
+          if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
         });
 
-        // Handle live captions from other participant
         api.socket.on('webrtc_caption', (captionData) => {
           setCaptions(prev => [...prev.slice(-4), captionData]);
         });
       }
 
-      // 4. Start speech recognition for live multilingual subtitles
+      // 5. Start speech recognition for live multilingual subtitles
       startSpeechSubtitles();
 
     } catch (err) {
@@ -420,7 +489,7 @@ export default function VideoMeetingModal({
           if (event.results[event.results.length - 1].isFinal) {
             let translated = transcript;
             try {
-              const res = await api.translate(transcript, selectedLanguage, 'en');
+              const res = await api.translateText(transcript, 'en');
               translated = res.translated_text || transcript;
             } catch (e) {
               if (selectedLanguage === 'hi') translated = `[अनुवाद]: ${transcript}`;
@@ -428,7 +497,7 @@ export default function VideoMeetingModal({
             }
 
             const newCap = {
-              speaker: currentUser?.name || 'Speaker',
+              speaker: currentUser?.name || (currentUser?.role === 'therapist' ? 'Dr. Rajesh Kulkarni' : 'Asha Sharma'),
               text: transcript,
               translated,
               time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -437,6 +506,10 @@ export default function VideoMeetingModal({
             setCaptions(prev => [...prev.slice(-4), newCap]);
             setLiveTranscript('');
 
+            // Broadcast to other participant
+            if (bcRef.current) {
+              bcRef.current.postMessage({ type: 'caption', senderId: senderIdRef.current, caption: newCap });
+            }
             if (api.socket) {
               api.socket.emit('webrtc_caption', { roomId, ...newCap });
             }
@@ -464,6 +537,13 @@ export default function VideoMeetingModal({
     }
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
+    }
+    if (bcRef.current) {
+      try {
+        bcRef.current.postMessage({ type: 'leave', senderId: senderIdRef.current });
+        bcRef.current.close();
+      } catch (e) {}
+      bcRef.current = null;
     }
     if (api.socket) {
       api.socket.emit('webrtc_leave', {
@@ -599,7 +679,7 @@ export default function VideoMeetingModal({
 
             <div className="absolute top-3 left-3 z-20 flex items-center space-x-1.5 bg-black/60 px-2.5 py-1 rounded-full text-[10px] text-white backdrop-blur-md">
               <Users className="w-3 h-3 text-cyan-400" />
-              <span>{hasRemotePeer ? 'Remote P2P Live Stream' : 'Remote Room Monitor'}</span>
+              <span>{hasRemotePeer ? 'Remote Live Stream' : 'Remote Room Monitor'}</span>
             </div>
           </div>
 
@@ -644,7 +724,7 @@ export default function VideoMeetingModal({
                   <div key={i} className="text-xs flex items-start space-x-2">
                     <span className="font-bold text-cyan-300 shrink-0">{c.speaker}:</span>
                     <span className="text-slate-300 italic font-mono text-[11px]">"{c.text}"</span>
-                    <span className="text-emerald-400 font-medium">➔ {c.translated}</span>
+                    <span className="text-emerald-400 font-medium font-mono">[{c.translated}]</span>
                   </div>
                 ))}
                 {liveTranscript && (

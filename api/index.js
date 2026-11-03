@@ -152,6 +152,33 @@ const PRESCRIPTIONS = [
   }
 ];
 
+let CLINICAL_MEETINGS = [
+  {
+    id: 'mt_weekly_kinematics',
+    title: 'Weekly Kinematics Evaluation',
+    patient_id: 'pt_1',
+    patient_name: 'Asha Sharma',
+    therapist_name: 'Dr. Rajesh Kulkarni, PT',
+    scheduled_time: 'Today at 04:30 PM',
+    duration_minutes: 30,
+    room_id: 'remotion-room-pt_1',
+    notes: 'Upper-limb ROM evaluation and Squeeze & Fill active flexion check.',
+    status: 'scheduled'
+  },
+  {
+    id: 'mt_post_stroke_followup',
+    title: 'Post-Stroke Functional Reach Review',
+    patient_id: 'pt_1',
+    patient_name: 'Asha Sharma',
+    therapist_name: 'Dr. Rajesh Kulkarni, PT',
+    scheduled_time: 'Tomorrow at 10:30 AM',
+    duration_minutes: 45,
+    room_id: 'remotion-room-pt_1',
+    notes: 'Assess lateral shoulder abduction and virtual target reaching latency.',
+    status: 'scheduled'
+  }
+];
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -270,8 +297,32 @@ export default async function handler(req, res) {
       badges: [
         { id: 'b_1', badge_code: 'SQ', name: 'Sponge Master', description: 'Completed 15 full clench-and-release repetitions.' },
         { id: 'b_2', badge_code: '7D', name: '7-Day Champion', description: 'Maintained 7 consecutive rehabilitation days.' }
-      ]
+      ],
+      meetings: CLINICAL_MEETINGS
     });
+  }
+
+  // 4b. Clinical Meetings / Telehealth Appointments
+  if (pathname === '/meetings') {
+    if (req.method === 'POST') {
+      const { patient_id = 'pt_1', title, scheduled_time, duration_minutes = 30, notes = '' } = body;
+      const targetPt = PATIENTS.find(p => p.id === patient_id) || PATIENTS[0];
+      const newMeeting = {
+        id: 'mt_' + Date.now().toString(36),
+        patient_id: targetPt.id,
+        patient_name: targetPt.name,
+        therapist_name: 'Dr. Rajesh Kulkarni, PT',
+        title: title || 'Clinical Kinematics Review',
+        scheduled_time: scheduled_time || 'Today at 05:00 PM',
+        duration_minutes: Number(duration_minutes) || 30,
+        room_id: 'remotion-room-' + targetPt.id,
+        notes: notes || 'Clinical assessment of active range of motion and dexterity.',
+        status: 'scheduled'
+      };
+      CLINICAL_MEETINGS.unshift(newMeeting);
+      return res.status(200).json({ success: true, meeting: newMeeting, meetings: CLINICAL_MEETINGS });
+    }
+    return res.status(200).json({ meetings: CLINICAL_MEETINGS });
   }
 
   // 5. Therapist Patients Caseload

@@ -24,6 +24,33 @@ const THERAPIST_TABS = [
   { id: 'profile', label: 'Profile', icon: Stethoscope },
 ];
 
+const DEFAULT_APPOINTMENTS = [
+  {
+    id: 'mt_weekly_kinematics',
+    title: 'Weekly Kinematics Evaluation',
+    patient_id: 'pt_1',
+    patient_name: 'Asha Sharma',
+    therapist_name: 'Dr. Rajesh Kulkarni, PT',
+    scheduled_time: 'Today at 04:30 PM',
+    duration_minutes: 30,
+    room_id: 'remotion-room-pt_1',
+    notes: 'Upper-limb ROM evaluation and Squeeze & Fill active flexion check.',
+    status: 'scheduled'
+  },
+  {
+    id: 'mt_post_stroke_followup',
+    title: 'Post-Stroke Functional Reach Review',
+    patient_id: 'pt_1',
+    patient_name: 'Asha Sharma',
+    therapist_name: 'Dr. Rajesh Kulkarni, PT',
+    scheduled_time: 'Tomorrow at 10:30 AM',
+    duration_minutes: 45,
+    room_id: 'remotion-room-pt_1',
+    notes: 'Assess lateral shoulder abduction and virtual target reaching latency.',
+    status: 'scheduled'
+  }
+];
+
 export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [activeTab, setActiveTab] = useState('overview'); // 11 clinical tabs
   const [patients, setPatients] = useState([]);
@@ -40,6 +67,24 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+
+  // Telehealth Appointments State
+  const [appointments, setAppointments] = useState(() => {
+    try {
+      const saved = localStorage.getItem('remotion_all_appointments');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return DEFAULT_APPOINTMENTS;
+  });
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleForm, setScheduleForm] = useState({
+    patient_id: 'pt_1',
+    title: 'Weekly Kinematics Evaluation',
+    date: new Date().toISOString().slice(0, 10),
+    time: '04:30 PM',
+    duration_minutes: 30,
+    notes: 'Review active finger flexion in Squeeze & Fill and monitor lateral shoulder abduction trajectory.'
+  });
 
   // SOAP Clinical Notes State
   const [soapNotes, setSoapNotes] = useState({
@@ -122,32 +167,189 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     } catch (e) {}
   };
 
+  // Immediate Dual-Start Video Consultation Launcher
+  const startImmediateCall = (meetingData) => {
+    const currentPt = patients.find(p => p.id === (meetingData?.patient_id || selectedPatientId)) || selectedPatient || patients[0];
+    const meeting = {
+      id: meetingData?.id || 'mt_' + Date.now().toString(36),
+      title: meetingData?.title || `Clinical Review with ${currentPt?.name || 'Asha Sharma'}`,
+      patient_id: currentPt?.id || 'pt_1',
+      patient_name: currentPt?.name || 'Asha Sharma',
+      therapist_name: 'Dr. Rajesh Kulkarni, PT',
+      scheduled_time: meetingData?.scheduled_time || 'Now (Live Immediate Telehealth)',
+      duration_minutes: meetingData?.duration_minutes || 30,
+      room_id: meetingData?.room_id || `remotion-room-${currentPt?.id || 'pt_1'}`,
+      notes: meetingData?.notes || 'Live clinical evaluation'
+    };
+
+    // 1. Immediately launch modal in Therapist portal
+    setSelectedMeeting(meeting);
+
+    // 2. Broadcast immediately to Patient portal via BroadcastChannel (<1ms cross-window sync)
+    try {
+      const syncChannel = new BroadcastChannel('remotion_telehealth_sync');
+      syncChannel.postMessage({
+        type: 'IMMEDIATE_START_CALL',
+        callerRole: 'therapist',
+        callerName: 'Dr. Rajesh Kulkarni, PT',
+        meeting,
+        timestamp: Date.now()
+      });
+      syncChannel.close();
+    } catch (e) {
+      console.warn('BroadcastChannel error:', e);
+    }
+
+    // 3. Trigger localStorage storage event fallback
+    try {
+      localStorage.setItem('remotion_telehealth_call_signal', JSON.stringify({
+        type: 'IMMEDIATE_START_CALL',
+        callerRole: 'therapist',
+        callerName: 'Dr. Rajesh Kulkarni, PT',
+        meeting,
+        timestamp: Date.now()
+      }));
+    } catch (e) {}
+
+    // 4. Relay via Socket.IO across network
+    if (api.socket) {
+      api.socket.emit('webrtc_call_alert', {
+        callerName: 'Dr. Rajesh Kulkarni, PT',
+        roomId: meeting.room_id,
+        meetingTitle: meeting.title,
+        targetRole: 'patient',
+        targetUserId: currentPt?.user_id || 'u_patient_1'
+      });
+    }
+
+    setToastMessage(`Video consultation initiated with ${meeting.patient_name}. Room: ${meeting.room_id}`);
+    setTimeout(() => setToastMessage(null), 5000);
+  };
+
+  // Schedule Appointment Submission
+  const handleScheduleAppointment = async (e) => {
+    e.preventDefault();
+    const targetPt = patients.find(p => p.id === scheduleForm.patient_id) || selectedPatient || patients[0];
+    const newMeeting = {
+      id: 'mt_' + Date.now().toString(36),
+      title: scheduleForm.title.trim() || 'Clinical Kinematics Review',
+      patient_id: targetPt?.id || 'pt_1',
+      patient_name: targetPt?.name || 'Asha Sharma',
+      therapist_name: 'Dr. Rajesh Kulkarni, PT',
+      scheduled_time: `${scheduleForm.date} at ${scheduleForm.time}`,
+      duration_minutes: parseInt(scheduleForm.duration_minutes, 10) || 30,
+      room_id: `remotion-room-${targetPt?.id || 'pt_1'}`,
+      notes: scheduleForm.notes || 'Clinical video consultation and kinematics check.',
+      status: 'scheduled'
+    };
+
+    const updatedList = [newMeeting, ...appointments.filter(a => a.id !== newMeeting.id)];
+    setAppointments(updatedList);
+    try {
+      localStorage.setItem('remotion_all_appointments', JSON.stringify(updatedList));
+    } catch (err) {}
+
+    // Sync to Patient portal via BroadcastChannel
+    try {
+      const bc = new BroadcastChannel('remotion_telehealth_sync');
+      bc.postMessage({
+        type: 'APPOINTMENT_SCHEDULED',
+        appointment: newMeeting
+      });
+      bc.close();
+    } catch (err) {}
+
+    // Also persist via API
+    try {
+      await api.scheduleMeeting({
+        patient_id: newMeeting.patient_id,
+        title: newMeeting.title,
+        scheduled_time: newMeeting.scheduled_time,
+        duration_minutes: newMeeting.duration_minutes,
+        notes: newMeeting.notes
+      });
+    } catch (apiErr) {
+      console.warn('Backend API schedule sync note:', apiErr);
+    }
+
+    setShowScheduleModal(false);
+    setToastMessage(`Consultation scheduled with ${newMeeting.patient_name} for ${newMeeting.scheduled_time}`);
+    setTimeout(() => setToastMessage(null), 6000);
+  };
+
   // Real-time listener for patient session completions & incoming telehealth calls
   useEffect(() => {
-    if (!api.socket) return;
-
-    const handlePatientSession = (session) => {
-      setToastMessage(`Live Telemetry Alert: ${session.patientName} completed ${session.repetitions_completed} reps with ${Math.round(session.accuracy_pct)}% accuracy.`);
-      if (selectedPatientId === session.patientId) {
-        api.getPatientDetails(selectedPatientId).then(setPatientDetail).catch(console.error);
+    // 1. Cross-tab BroadcastChannel listener for instant dual-start
+    const handleTelehealthMessage = (event) => {
+      const data = event.data;
+      if (!data) return;
+      if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
+        console.log('[TherapistPortal] Telehealth call auto-initiated by patient:', data.meeting);
+        playRingChime();
+        setSelectedMeeting(data.meeting);
+        setToastMessage(`Patient ${data.callerName || 'Asha Sharma'} joined the video room. Connecting...`);
+        setTimeout(() => setToastMessage(null), 6000);
+      } else if (data.type === 'APPOINTMENT_SCHEDULED' && data.appointment) {
+        setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
       }
-      setTimeout(() => setToastMessage(null), 7000);
     };
 
-    const handleIncomingCall = (callData) => {
-      console.log('[TherapistPortal] Incoming patient telehealth call:', callData);
-      setIncomingCall(callData);
-      playRingChime();
-    };
+    let syncChannel = null;
+    try {
+      syncChannel = new BroadcastChannel('remotion_telehealth_sync');
+      syncChannel.onmessage = handleTelehealthMessage;
+    } catch (e) {}
 
-    api.socket.on('patient_session_completed', handlePatientSession);
-    api.socket.on('webrtc_incoming_call', handleIncomingCall);
+    // 2. Cross-tab localStorage fallback listener
+    const handleStorageEvent = (e) => {
+      if (e.key === 'remotion_telehealth_call_signal' && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
+            playRingChime();
+            setSelectedMeeting(data.meeting);
+          }
+        } catch (err) {}
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
+    // 3. Socket.IO listeners
+    let handleSocketIncoming = null;
+    let handlePatientSession = null;
+    if (api.socket) {
+      handlePatientSession = (session) => {
+        setToastMessage(`Live Telemetry Alert: ${session.patientName} completed ${session.repetitions_completed} reps with ${Math.round(session.accuracy_pct)}% accuracy.`);
+        if (selectedPatientId === session.patientId) {
+          api.getPatientDetails(selectedPatientId).then(setPatientDetail).catch(console.error);
+        }
+        setTimeout(() => setToastMessage(null), 7000);
+      };
+
+      handleSocketIncoming = (callData) => {
+        console.log('[TherapistPortal] Incoming patient telehealth call from socket:', callData);
+        playRingChime();
+        const incomingMeeting = {
+          title: callData.meetingTitle || 'Clinical Telehealth Consultation',
+          scheduled_time: 'Now (Immediate Telehealth)',
+          room_id: callData.roomId || `remotion-room-${selectedPatientId || 'pt_1'}`
+        };
+        setSelectedMeeting(incomingMeeting);
+      };
+
+      api.socket.on('patient_session_completed', handlePatientSession);
+      api.socket.on('webrtc_incoming_call', handleSocketIncoming);
+    }
 
     return () => {
-      api.socket.off('patient_session_completed', handlePatientSession);
-      api.socket.off('webrtc_incoming_call', handleIncomingCall);
+      if (syncChannel) syncChannel.close();
+      window.removeEventListener('storage', handleStorageEvent);
+      if (api.socket) {
+        if (handlePatientSession) api.socket.off('patient_session_completed', handlePatientSession);
+        if (handleSocketIncoming) api.socket.off('webrtc_incoming_call', handleSocketIncoming);
+      }
     };
-  }, [selectedPatientId]);
+  }, [patients, selectedPatientId]);
 
   const handleOpenChat = async (targetPatient) => {
     const pt = targetPatient || selectedPatient;
@@ -371,54 +573,88 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                 </p>
               </div>
 
-              <button
-                onClick={() => setSelectedMeeting({
-                  title: `Clinical Review with ${selectedPatient?.name || 'Asha Sharma'}`,
-                  scheduled_time: 'Now (Immediate P2P Telehealth)',
-                  room_id: `remotion-room-${selectedPatient?.id || 'pt_1'}`
-                })}
-                className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/25 transition-all cursor-pointer"
-              >
-                <Video className="w-4 h-4" />
-                <span>Start Video Call ({selectedPatient?.name || 'Asha Sharma'})</span>
-              </button>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setShowScheduleModal(true)}
+                  className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs border border-slate-300 transition-all cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-blue-600" />
+                  <span>Schedule Video Call</span>
+                </button>
+
+                <button
+                  onClick={() => startImmediateCall({
+                    title: `Immediate Clinical Review with ${selectedPatient?.name || 'Asha Sharma'}`,
+                    patient_id: selectedPatient?.id || 'pt_1',
+                    patient_name: selectedPatient?.name || 'Asha Sharma',
+                    room_id: `remotion-room-${selectedPatient?.id || 'pt_1'}`
+                  })}
+                  className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/25 transition-all cursor-pointer"
+                >
+                  <Video className="w-4 h-4" />
+                  <span>Start Video Call ({selectedPatient?.name || 'Asha Sharma'})</span>
+                </button>
+              </div>
             </div>
 
+            {/* Dynamic Appointment Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl bg-blue-50/60 border border-blue-200">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-blue-900">Weekly Kinematics Evaluation</span>
-                  <span className="text-[10px] font-mono bg-blue-200 text-blue-800 font-bold px-2 py-0.5 rounded-full">SCHEDULED (ACTIVE)</span>
-                </div>
-                <p className="text-xs text-slate-600">Patient: <span className="font-bold text-slate-900">{selectedPatient?.name || 'Asha Sharma'}</span> (Hemiparesis Recovery)</p>
-                <div className="text-[11px] font-mono text-slate-500 mt-1">Room: remotion-room-{selectedPatient?.id || 'pt_1'}</div>
-                <div className="mt-3 flex items-center space-x-2">
-                  <button
-                    onClick={() => setSelectedMeeting({
-                      title: `Weekly Kinematics Evaluation with ${selectedPatient?.name || 'Asha Sharma'}`,
-                      scheduled_time: 'Now (Immediate Telehealth)',
-                      room_id: `remotion-room-${selectedPatient?.id || 'pt_1'}`
-                    })}
-                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 flex items-center space-x-1.5 cursor-pointer"
-                  >
-                    <Video className="w-3.5 h-3.5" />
-                    <span>Launch Video Consultation</span>
-                  </button>
-                  <span className="text-[11px] text-emerald-600 font-mono font-medium">● WebRTC Ready</span>
-                </div>
-              </div>
+              {appointments.map((appt) => (
+                <div key={appt.id} className="p-5 rounded-2xl bg-blue-50/70 border border-blue-200 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-bold text-blue-950">{appt.title}</span>
+                      <span className="text-[10px] font-mono bg-blue-200 text-blue-800 font-bold px-2 py-0.5 rounded-full uppercase">
+                        {appt.status || 'SCHEDULED'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700">
+                      Patient: <span className="font-bold text-slate-900">{appt.patient_name || 'Asha Sharma'}</span>
+                    </p>
+                    <div className="text-xs font-mono text-blue-700 font-semibold mt-1 flex items-center space-x-2">
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>{appt.scheduled_time} ({appt.duration_minutes || 30} mins)</span>
+                    </div>
+                    {appt.notes && (
+                      <p className="text-xs text-slate-600 mt-2 bg-white/70 p-2.5 rounded-lg border border-blue-100">
+                        {appt.notes}
+                      </p>
+                    )}
+                    <div className="text-[10px] font-mono text-slate-500 mt-2">
+                      Room: {appt.room_id || `remotion-room-${appt.patient_id || 'pt_1'}`}
+                    </div>
+                  </div>
 
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+                  <div className="mt-4 pt-3 border-t border-blue-100 flex items-center justify-between">
+                    <button
+                      onClick={() => startImmediateCall(appt)}
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>Launch Video Call (Dual-Start)</span>
+                    </button>
+                    <span className="text-[11px] text-emerald-600 font-mono font-medium flex items-center space-x-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <span>WebRTC Ready</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+
+              {/* Diagnostic Overview Card */}
+              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
                 <div>
-                  <span className="text-xs font-bold text-slate-900 block mb-1">Telehealth Diagnostic Features</span>
-                  <ul className="text-xs text-slate-600 space-y-1 list-disc list-inside">
-                    <li>Real-time STUN/TURN P2P video streaming</li>
-                    <li>Synchronized joint angle goniometer telemetry</li>
-                    <li>Dual-language live translated captioning (Hindi, Kannada, Tamil, Telugu)</li>
+                  <span className="text-xs font-bold text-slate-900 block mb-2">Telehealth Diagnostic Features</span>
+                  <ul className="text-xs text-slate-600 space-y-1.5 list-disc list-inside">
+                    <li>Real-time STUN/TURN peer-to-peer video streaming with zero lag</li>
+                    <li>Synchronized joint angle goniometer telemetry overlay</li>
+                    <li>Dual-language live translated captioning (Hindi, Kannada, Tamil, Telugu, English)</li>
+                    <li>Automatic cross-portal launch synchronization between clinician and patient</li>
                   </ul>
                 </div>
-                <div className="text-[10px] text-slate-400 font-mono mt-2">
-                  Room Identifier: remotion-room-{selectedPatient?.id || 'pt_1'}
+                <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                  <span>Signaling: BroadcastChannel + Socket.IO</span>
+                  <span className="text-blue-600 font-bold">Latency: &lt;15ms</span>
                 </div>
               </div>
             </div>
@@ -512,12 +748,13 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                       </button>
 
                       <button
-                        onClick={() => setSelectedMeeting({
+                        onClick={() => startImmediateCall({
                           title: `Clinical Review with ${selectedPatient.name}`,
-                          scheduled_time: 'Now (Immediate P2P)',
+                          patient_id: selectedPatient.id,
+                          patient_name: selectedPatient.name,
                           room_id: `remotion-room-${selectedPatient.id}`
                         })}
-                        className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20"
+                        className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 cursor-pointer"
                       >
                         <Video className="w-3.5 h-3.5 fill-current" />
                         <span>Start Video Call</span>
@@ -854,9 +1091,9 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
               </div>
               <button
                 onClick={() => setIsChatOpen(false)}
-                className="p-1.5 text-white/80 hover:text-white rounded-lg hover:bg-white/10 text-sm font-bold"
+                className="p-1.5 text-white/80 hover:text-white rounded-lg hover:bg-white/10 text-sm font-bold flex items-center justify-center cursor-pointer"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -995,6 +1232,138 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
               <PhoneOff className="w-4 h-4 text-rose-400" />
               <span>Decline</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Video Consultation Modal */}
+      {showScheduleModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-slideUp">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                  <Calendar className="w-5 h-5 text-blue-700" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Schedule Video Consultation</h3>
+                  <p className="text-xs text-slate-500 font-mono">Telehealth Session with Dual-Start Synchronization</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowScheduleModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center cursor-pointer transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleScheduleAppointment} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Assigned Patient
+                </label>
+                <select
+                  value={scheduleForm.patient_id}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, patient_id: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                >
+                  {patients.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} - {p.condition}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Consultation Title / Clinical Objective
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={scheduleForm.title}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, title: e.target.value })}
+                  placeholder="e.g. Weekly Kinematics Evaluation"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={scheduleForm.date}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, date: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Time
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={scheduleForm.time}
+                    onChange={(e) => setScheduleForm({ ...scheduleForm, time: e.target.value })}
+                    placeholder="e.g. 04:30 PM"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Consultation Duration
+                </label>
+                <select
+                  value={scheduleForm.duration_minutes}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, duration_minutes: Number(e.target.value) })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                >
+                  <option value={15}>15 Minutes (Rapid Telemetry Check)</option>
+                  <option value={30}>30 Minutes (Standard Clinical Review)</option>
+                  <option value={45}>45 Minutes (Full Motor Kinematics Assessment)</option>
+                  <option value={60}>60 Minutes (Comprehensive Rehabilitation Exam)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Clinical Focus & Notes
+                </label>
+                <textarea
+                  rows={3}
+                  value={scheduleForm.notes}
+                  onChange={(e) => setScheduleForm({ ...scheduleForm, notes: e.target.value })}
+                  placeholder="Specific movements or tests to evaluate during call..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-sans"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setShowScheduleModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/30 flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <Calendar className="w-4 h-4" />
+                  <span>Confirm & Schedule</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

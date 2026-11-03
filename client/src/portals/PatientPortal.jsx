@@ -17,6 +17,33 @@ import RemoAssistant from '../components/RemoAssistant';
 import PlayableGameModal from './PlayableGameModal';
 import GameThumbnail from '../components/GameThumbnail';
 
+const DEFAULT_APPOINTMENTS = [
+  {
+    id: 'mt_weekly_kinematics',
+    title: 'Weekly Kinematics Evaluation',
+    patient_id: 'pt_1',
+    patient_name: 'Asha Sharma',
+    therapist_name: 'Dr. Rajesh Kulkarni, PT',
+    scheduled_time: 'Today at 04:30 PM',
+    duration_minutes: 30,
+    room_id: 'remotion-room-pt_1',
+    notes: 'Upper-limb ROM evaluation and Squeeze & Fill active flexion check.',
+    status: 'scheduled'
+  },
+  {
+    id: 'mt_post_stroke_followup',
+    title: 'Post-Stroke Functional Reach Review',
+    patient_id: 'pt_1',
+    patient_name: 'Asha Sharma',
+    therapist_name: 'Dr. Rajesh Kulkarni, PT',
+    scheduled_time: 'Tomorrow at 10:30 AM',
+    duration_minutes: 45,
+    room_id: 'remotion-room-pt_1',
+    notes: 'Assess lateral shoulder abduction and virtual target reaching latency.',
+    status: 'scheduled'
+  }
+];
+
 export default function PatientPortal({ currentUser, onNavigateGaming }) {
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, exercises, games, chat, progress, appointments, history, assistant, profile
   const [dashboardData, setDashboardData] = useState(null);
@@ -25,6 +52,13 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
   const [selectedGame, setSelectedGame] = useState(null);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
+  const [appointments, setAppointments] = useState(() => {
+    try {
+      const saved = localStorage.getItem('remotion_all_appointments');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return DEFAULT_APPOINTMENTS;
+  });
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLanguage, setChatLanguage] = useState('hi');
@@ -110,65 +144,177 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     } catch (e) {}
   };
 
-  // Socket.IO Real-Time Listener for Instant Prescription Updates & Messages
+  // Immediate Dual-Start Video Consultation Launcher for Patient
+  const joinImmediateCall = (meetingData) => {
+    const ptName = dashboardData?.patient?.name || 'Asha Sharma';
+    const ptId = dashboardData?.patient?.id || 'pt_1';
+    const meeting = {
+      id: meetingData?.id || 'mt_' + Date.now().toString(36),
+      title: meetingData?.title || 'Clinical Review with Dr. Rajesh Kulkarni',
+      patient_id: ptId,
+      patient_name: ptName,
+      therapist_name: dashboardData?.patient?.therapist_name || 'Dr. Rajesh Kulkarni, PT',
+      scheduled_time: meetingData?.scheduled_time || 'Now (Live Immediate Telehealth)',
+      duration_minutes: meetingData?.duration_minutes || 30,
+      room_id: meetingData?.room_id || `remotion-room-${ptId}`,
+      notes: meetingData?.notes || 'Clinical consultation'
+    };
+
+    // 1. Immediately launch modal locally in Patient portal
+    setSelectedMeeting(meeting);
+
+    // 2. Broadcast immediately to Therapist portal via BroadcastChannel (<1ms cross-window sync)
+    try {
+      const syncChannel = new BroadcastChannel('remotion_telehealth_sync');
+      syncChannel.postMessage({
+        type: 'IMMEDIATE_START_CALL',
+        callerRole: 'patient',
+        callerName: ptName,
+        meeting,
+        timestamp: Date.now()
+      });
+      syncChannel.close();
+    } catch (e) {
+      console.warn('BroadcastChannel error:', e);
+    }
+
+    // 3. Trigger localStorage storage event fallback
+    try {
+      localStorage.setItem('remotion_telehealth_call_signal', JSON.stringify({
+        type: 'IMMEDIATE_START_CALL',
+        callerRole: 'patient',
+        callerName: ptName,
+        meeting,
+        timestamp: Date.now()
+      }));
+    } catch (e) {}
+
+    // 4. Relay via Socket.IO across network
+    if (api.socket) {
+      api.socket.emit('webrtc_call_alert', {
+        callerName: ptName,
+        roomId: meeting.room_id,
+        meetingTitle: meeting.title,
+        targetRole: 'therapist'
+      });
+    }
+
+    setRealtimeNotice(`Joining video consultation with Dr. Rajesh Kulkarni...`);
+    setTimeout(() => setRealtimeNotice(null), 5000);
+  };
+
+  // Real-time listener for instant cross-portal call synchronization & Socket.IO updates
   useEffect(() => {
-    if (!api.socket) return;
+    // 1. Cross-tab BroadcastChannel listener for instant dual-start
+    const handleTelehealthMessage = (event) => {
+      const data = event.data;
+      if (!data) return;
+      if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
+        console.log('[PatientPortal] Telehealth call auto-initiated by clinician:', data.meeting);
+        playRingChime();
+        setSelectedMeeting(data.meeting);
+        setRealtimeNotice(`Dr. Rajesh Kulkarni has started the video call. Connecting...`);
+        setTimeout(() => setRealtimeNotice(null), 6000);
+      } else if (data.type === 'APPOINTMENT_SCHEDULED' && data.appointment) {
+        setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
+        setRealtimeNotice(`New video consultation scheduled: ${data.appointment.title}`);
+        setTimeout(() => setRealtimeNotice(null), 6000);
+      }
+    };
 
-    const handlePrescriptionCreated = (newPrescription) => {
-      setRealtimeNotice(`New prescription assigned: ${newPrescription.exercise_name || newPrescription.game_title || 'Routine'}`);
-      setDashboardData((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          prescriptions: [newPrescription, ...(prev.prescriptions || [])]
+    let syncChannel = null;
+    try {
+      syncChannel = new BroadcastChannel('remotion_telehealth_sync');
+      syncChannel.onmessage = handleTelehealthMessage;
+    } catch (e) {}
+
+    // 2. Cross-tab localStorage fallback listener
+    const handleStorageEvent = (e) => {
+      if (e.key === 'remotion_telehealth_call_signal' && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
+            playRingChime();
+            setSelectedMeeting(data.meeting);
+          }
+        } catch (err) {}
+      }
+    };
+    window.addEventListener('storage', handleStorageEvent);
+
+    // 3. Socket.IO listeners
+    let handlePrescriptionCreated = null;
+    let handlePrescriptionUpdated = null;
+    let handleNotification = null;
+    let handleNewMessage = null;
+    let handleIncomingCall = null;
+
+    if (api.socket) {
+      handlePrescriptionCreated = (newPrescription) => {
+        setRealtimeNotice(`New prescription assigned: ${newPrescription.exercise_name || newPrescription.game_title || 'Routine'}`);
+        setDashboardData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            prescriptions: [newPrescription, ...(prev.prescriptions || [])]
+          };
+        });
+        setTimeout(() => setRealtimeNotice(null), 7000);
+      };
+
+      handlePrescriptionUpdated = (updatedPrescription) => {
+        setRealtimeNotice(`Prescription updated by therapist.`);
+        setDashboardData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            prescriptions: prev.prescriptions.map(p => p.id === updatedPrescription.id ? updatedPrescription : p)
+          };
+        });
+        setTimeout(() => setRealtimeNotice(null), 5000);
+      };
+
+      handleNotification = (notif) => {
+        setRealtimeNotice(`${notif.title}: ${notif.message}`);
+        setTimeout(() => setRealtimeNotice(null), 6000);
+      };
+
+      handleNewMessage = (msg) => {
+        setChatMessages(prev => [...prev, msg]);
+        setRealtimeNotice(`Message from ${msg.sender_name || 'Dr. Rajesh'}: ${msg.message_text}`);
+        setTimeout(() => setRealtimeNotice(null), 6000);
+      };
+
+      handleIncomingCall = (callData) => {
+        console.log('[PatientPortal] Telehealth incoming call from socket:', callData);
+        playRingChime();
+        const incomingMeeting = {
+          title: callData.meetingTitle || 'Clinical Telehealth Consultation',
+          scheduled_time: 'Now (Immediate Telehealth)',
+          room_id: callData.roomId || `remotion-room-${dashboardData?.patient?.id || 'pt_1'}`
         };
-      });
-      setTimeout(() => setRealtimeNotice(null), 7000);
-    };
+        setSelectedMeeting(incomingMeeting);
+      };
 
-    const handlePrescriptionUpdated = (updatedPrescription) => {
-      setRealtimeNotice(`Prescription updated by therapist.`);
-      setDashboardData((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          prescriptions: prev.prescriptions.map(p => p.id === updatedPrescription.id ? updatedPrescription : p)
-        };
-      });
-      setTimeout(() => setRealtimeNotice(null), 5000);
-    };
-
-    const handleNotification = (notif) => {
-      setRealtimeNotice(`${notif.title}: ${notif.message}`);
-      setTimeout(() => setRealtimeNotice(null), 6000);
-    };
-
-    const handleNewMessage = (msg) => {
-      setChatMessages(prev => [...prev, msg]);
-      setRealtimeNotice(`Message from ${msg.sender_name || 'Dr. Rajesh'}: ${msg.message_text}`);
-      setTimeout(() => setRealtimeNotice(null), 6000);
-    };
-
-    const handleIncomingCall = (callData) => {
-      console.log('[PatientPortal] Telehealth incoming call:', callData);
-      setIncomingCall(callData);
-      playRingChime();
-    };
-
-    api.socket.on('prescription_created', handlePrescriptionCreated);
-    api.socket.on('prescription_updated', handlePrescriptionUpdated);
-    api.socket.on('notification', handleNotification);
-    api.socket.on('new_message', handleNewMessage);
-    api.socket.on('webrtc_incoming_call', handleIncomingCall);
+      api.socket.on('prescription_created', handlePrescriptionCreated);
+      api.socket.on('prescription_updated', handlePrescriptionUpdated);
+      api.socket.on('notification', handleNotification);
+      api.socket.on('new_message', handleNewMessage);
+      api.socket.on('webrtc_incoming_call', handleIncomingCall);
+    }
 
     return () => {
-      api.socket.off('prescription_created', handlePrescriptionCreated);
-      api.socket.off('prescription_updated', handlePrescriptionUpdated);
-      api.socket.off('notification', handleNotification);
-      api.socket.off('new_message', handleNewMessage);
-      api.socket.off('webrtc_incoming_call', handleIncomingCall);
+      if (syncChannel) syncChannel.close();
+      window.removeEventListener('storage', handleStorageEvent);
+      if (api.socket) {
+        if (handlePrescriptionCreated) api.socket.off('prescription_created', handlePrescriptionCreated);
+        if (handlePrescriptionUpdated) api.socket.off('prescription_updated', handlePrescriptionUpdated);
+        if (handleNotification) api.socket.off('notification', handleNotification);
+        if (handleNewMessage) api.socket.off('new_message', handleNewMessage);
+        if (handleIncomingCall) api.socket.off('webrtc_incoming_call', handleIncomingCall);
+      }
     };
-  }, []);
+  }, [dashboardData?.patient]);
 
   // Time of day friendly greeting
   const getGreeting = () => {
@@ -896,40 +1042,72 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         )}
 
         {/* ======================================================== */}
-        {/* TAB 6: APPOINTMENTS                                      */}
+        {/* TAB 6: APPOINTMENTS & TELEHEALTH                         */}
         {/* ======================================================== */}
         {activeTab === 'appointments' && (
           <div className="space-y-6 animate-fadeIn">
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900 font-display">Clinical Appointments & Telehealth</h2>
-              <p className="text-xs text-slate-500 mt-1">Scheduled video consultations and check-ins with Dr. Rajesh Kulkarni.</p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900 font-display">Clinical Appointments & Telehealth</h2>
+                <p className="text-xs text-slate-500 mt-1">Scheduled video consultations and check-ins with Dr. Rajesh Kulkarni.</p>
+              </div>
+
+              <button
+                onClick={() => joinImmediateCall({
+                  title: 'Immediate Clinical Video Consultation',
+                  room_id: `remotion-room-${patient?.id || 'pt_1'}`
+                })}
+                className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md shadow-teal-600/20 flex items-center justify-center space-x-2 cursor-pointer self-start sm:self-auto"
+              >
+                <Video className="w-4 h-4" />
+                <span>Start Video Call Now</span>
+              </button>
             </div>
 
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm divide-y divide-slate-100">
-              <div className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold">
-                    <Video className="w-6 h-6 text-teal-700" />
+              {appointments.map((appt) => (
+                <div key={appt.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 first:pt-0 last:pb-0">
+                  <div className="flex items-start space-x-4">
+                    <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold shrink-0">
+                      <Video className="w-6 h-6 text-teal-700" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h4 className="font-bold text-slate-900 text-sm">{appt.title}</h4>
+                        <span className="text-[10px] font-mono bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded-full font-bold">
+                          {appt.duration_minutes || 30} MINS
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {appt.therapist_name || 'Dr. Rajesh Kulkarni, PT'} • Telehealth Video Session
+                      </p>
+                      <div className="text-xs text-teal-700 font-mono font-semibold mt-1 flex items-center space-x-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>{appt.scheduled_time}</span>
+                      </div>
+                      {appt.notes && (
+                        <p className="text-xs text-slate-600 mt-2 bg-slate-50 p-2.5 rounded-lg border border-slate-100 max-w-xl">
+                          {appt.notes}
+                        </p>
+                      )}
+                      <div className="text-[10px] font-mono text-slate-400 mt-1">
+                        Room: {appt.room_id || `remotion-room-${patient?.id || 'pt_1'}`}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">Weekly Kinematics Evaluation</h4>
-                    <p className="text-xs text-slate-500">Dr. Rajesh Kulkarni, PT • 30 mins video session</p>
-                    <div className="text-xs text-teal-700 font-mono mt-1">Tomorrow at 10:30 AM</div>
+
+                  <div className="flex flex-col items-end space-y-1.5">
+                    <button
+                      onClick={() => joinImmediateCall(appt)}
+                      className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md shadow-teal-600/20 flex items-center justify-center space-x-2 cursor-pointer w-full sm:w-auto"
+                    >
+                      <Video className="w-4 h-4" />
+                      <span>Join Video Call</span>
+                    </button>
+                    <span className="text-[10px] font-mono text-emerald-600 font-medium">● Instant Dual-Start Sync</span>
                   </div>
                 </div>
-
-                <button
-                  onClick={() => setSelectedMeeting({
-                    title: 'Weekly Kinematics Evaluation with Dr. Rajesh Kulkarni',
-                    scheduled_time: 'Now (Immediate Telehealth)',
-                    room_id: `remotion-room-${patient?.id || 'pt_1'}`
-                  })}
-                  className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md shadow-teal-600/20 flex items-center justify-center space-x-2 cursor-pointer"
-                >
-                  <Video className="w-4 h-4" />
-                  <span>Join Video Call</span>
-                </button>
-              </div>
+              ))}
             </div>
           </div>
         )}
@@ -1129,7 +1307,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
           <div className="flex items-center space-x-3">
             <button
               onClick={() => {
-                setSelectedMeeting({
+                joinImmediateCall({
                   title: incomingCall.meetingTitle || 'Weekly Kinematics Evaluation',
                   scheduled_time: 'Now (Immediate Telehealth)',
                   room_id: incomingCall.roomId || `remotion-room-${patient?.id || 'pt_1'}`

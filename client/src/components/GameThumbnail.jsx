@@ -349,14 +349,14 @@ export default function GameThumbnail({ gameId, className = "w-full h-full" }) {
           <rect width="200" height="120" fill="#09111e" rx="8" />
           {/* Grid of memory cards */}
           {[
-            { x: 30, y: 20, open: true, icon: '★' },
+            { x: 30, y: 20, open: true, icon: 'A' },
             { x: 70, y: 20, open: false },
-            { x: 110, y: 20, open: true, icon: '★' },
+            { x: 110, y: 20, open: true, icon: 'A' },
             { x: 150, y: 20, open: false },
             { x: 30, y: 65, open: false },
-            { x: 70, y: 65, open: true, icon: '♥' },
+            { x: 70, y: 65, open: true, icon: 'B' },
             { x: 110, y: 65, open: false },
-            { x: 150, y: 65, open: true, icon: '♥' }
+            { x: 150, y: 65, open: true, icon: 'B' }
           ].map((c, i) => (
             <g key={i} transform={`translate(${c.x}, ${c.y})`}>
               <rect
