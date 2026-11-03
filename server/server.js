@@ -24,7 +24,7 @@ const io = new SocketIOServer(server, {
   }
 });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'remotion_bts_bengaluru_secret_2026';
+const JWT_SECRET = process.env.JWT_SECRET || 'remotion_clinical_rehab_secret_2026';
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
@@ -905,7 +905,7 @@ app.get('/api/admin/export/patients', authenticateToken, async (req, res) => {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'ReMotion_Patients');
     const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
-    res.setHeader('Content-Disposition', 'attachment; filename="ReMotion_Patients_BTS_Bengaluru.xlsx"');
+    res.setHeader('Content-Disposition', 'attachment; filename="ReMotion_Patients_Registry.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
   } catch (err) {
@@ -940,7 +940,7 @@ app.get('/api/admin/export/therapists', authenticateToken, async (req, res) => {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'ReMotion_Therapists');
     const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
-    res.setHeader('Content-Disposition', 'attachment; filename="ReMotion_Therapists_BTS_Bengaluru.xlsx"');
+    res.setHeader('Content-Disposition', 'attachment; filename="ReMotion_Therapists_Registry.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
   } catch (err) {

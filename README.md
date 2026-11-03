@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Next-Generation Mixed Reality (AR/VR) & Computer Vision Motor Rehabilitation Platform</strong>
+  <strong>Next-Generation Mixed Reality (AR/VR) and Computer Vision Motor Rehabilitation Platform</strong>
 </p>
 
 <p align="center">
@@ -25,9 +25,9 @@
 
 ---
 
-## 🌐 Direct Live Application Link
+## Direct Live Application Link
 
-> ### 🔗 **[https://remotion-rehab.vercel.app](https://remotion-rehab.vercel.app)**
+> ### **[https://remotion-rehab.vercel.app](https://remotion-rehab.vercel.app)**
 > **Local Deployment**: `http://localhost:5000`  
 > **Repository**: [https://github.com/panchaksharayya12/Remotion.git](https://github.com/panchaksharayya12/Remotion.git)
 
@@ -37,7 +37,7 @@
 
 **ReMotion** is a comprehensive, full-stack medical rehabilitation platform engineered to accelerate upper-limb motor recovery for patients suffering from post-stroke hemiparesis, traumatic brain injuries, neuromuscular trauma, and orthopedic movement disorders.
 
-By uniting **MediaPipe optical computer vision**, **Three.js WebGL spatial physics**, **peer-to-peer WebRTC telehealth**, and **22 gamified therapeutic routines**, ReMotion transforms tedious physical therapy into an engaging, quantified, and clinically supervised experience.
+By uniting **MediaPipe optical computer vision**, **Three.js WebGL spatial physics**, **peer-to-peer WebRTC telehealth**, and **22 gamified therapeutic routines**, ReMotion transforms physical therapy into an engaging, quantified, and clinically supervised experience.
 
 ---
 
@@ -46,38 +46,33 @@ By uniting **MediaPipe optical computer vision**, **Three.js WebGL spatial physi
 ReMotion delivers four specialized, purpose-built workspaces under a single unified authentication architecture:
 
 ```
-                                  ┌───────────────────────────┐
-                                  │      ReMotion Gateway     │
-                                  │   (Unified Auth & RBAC)   │
-                                  └─────────────┬─────────────┘
-                                                │
-         ┌──────────────────┬───────────────────┼───────────────────┬──────────────────┐
-         ▼                  ▼                   ▼                   ▼                  ▼
-┌─────────────────┐┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│ Patient Portal  ││Therapist Portal │ │ Explorer Portal │ │  Admin Portal   │ │   Landing /     │
-│ Friendly Health ││Clinical Command │ │ 3D VR & Gaming  │ │ Enterprise Ops  │ │ Headset Tour    │
-│ Soft Teal Theme ││Hospital Navy    │ │Electric Cyan    │ │ Slate Executive │ │ Cinematic HUD   │
-└─────────────────┘└─────────────────┘ └─────────────────┘ └─────────────────┘ └─────────────────┘
+                                  +---------------------------+
+                                  |      ReMotion Gateway     |
+                                  |   (Unified Auth & RBAC)   |
+                                  +-------------+-------------+
+                                                |
+         +------------------+-------------------+-------------------+------------------+
+         |                  |                   |                   |                  |
+         v                  v                   v                   v                  v
++-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+
+| Patient Portal  | |Therapist Portal | | Explorer Portal | |  Admin Portal   | |   Landing /     |
+| Friendly Health | |Clinical Command | | 3D VR & Gaming  | | Enterprise Ops  | | Headset Tour    |
+| Soft Teal Theme | |Hospital Navy    | |Electric Cyan    | | Slate Executive | | Cinematic HUD   |
++-----------------+ +-----------------+ +-----------------+ +-----------------+ +-----------------+
 ```
 
-### 🏥 Portal 1: Patient Recovery Workspace (Friendly Healthcare Theme)
+### Portal 1: Patient Recovery Workspace (Friendly Healthcare Theme)
 - **Visual Design**: Welcoming, calm clinical teal and soft sky palette designed for patient comfort.
 - **Core Features**:
-  - Daily recovery streak counter, XP leveling system (Levels 1–10), and milestone achievement badges.
-  - Real-time prescription feed synchronized via WebSocket (<15ms latency).
+  - Daily recovery streak counter, XP leveling system (Levels 1 to 10), and milestone achievement badges.
+  - Real-time prescription feed synchronized via WebSocket (under 15ms latency).
   - One-click launcher for prescribed exercises (**Squeeze & Fill**, **Reach & Touch 3D**, **Hand Dexterity Check**).
   - Floating multilingual **Remo Assistant** supporting voice accessibility and query assistance in English, Hindi, Kannada, Tamil, Telugu, and Hinglish.
   - Telehealth appointment scheduler with instant **Join Video Call** WebRTC room launcher.
 
-<p align="center">
-  <img src="docs/images/mediapipe-hand-tracking.png" alt="Patient Optical Hand Tracking" width="85%" />
-  <br />
-  <em>Figure 1: Patient Workspace — Real-Time MediaPipe Optical Hand Tracking & Volumetric Fill Squeeze Mechanics.</em>
-</p>
-
 ---
 
-### 🩺 Portal 2: Therapist Clinical Command (Hospital Navy Workspace)
+### Portal 2: Therapist Clinical Command (Hospital Navy Workspace)
 - **Visual Design**: Professional, high-density clinical workstation with structured patient caseload tables.
 - **Core Features**:
   - Assigned patient caseload registry with instant search, condition filtering, and compliance tracking.
@@ -90,12 +85,12 @@ ReMotion delivers four specialized, purpose-built workspaces under a single unif
 <p align="center">
   <img src="docs/images/telehealth-video-call.png" alt="Clinical Telehealth Appointments" width="85%" />
   <br />
-  <em>Figure 2: Clinical Telehealth Suite — Direct P2P Video Consultation with Real-Time Subtitles.</em>
+  <em>Figure 1: Clinical Telehealth Suite - Direct P2P Video Consultation with Real-Time Subtitles.</em>
 </p>
 
 ---
 
-### 🥽 Portal 3: Explorer & VR Gaming Arena (High-Energy Electric Cyan)
+### Portal 3: Explorer & VR Gaming Arena (High-Energy Electric Cyan)
 - **Visual Design**: Cinematic dark navy and electric cyan aesthetic featuring interactive 3D WebGL visualizations.
 - **Core Features**:
   - **17-Component Exploded 3D Mixed Reality Headset**: Interactive spatial viewer showcasing lenses, Snapdragon XR2 compute core, ToF sensors, 6-DoF optical cameras, and IMU units with custom spatial disassembly slider.
@@ -105,18 +100,18 @@ ReMotion delivers four specialized, purpose-built workspaces under a single unif
 <p align="center">
   <img src="docs/images/headset-exploded-view.png" alt="3D Headset Exploded View Inspector" width="85%" />
   <br />
-  <em>Figure 3: Interactive 3D Headset Exploded-View Inspector — 17 Modular Subcomponents with Spatial Disassembly.</em>
+  <em>Figure 2: Interactive 3D Headset Exploded-View Inspector - 17 Modular Subcomponents with Spatial Disassembly.</em>
 </p>
 
 <p align="center">
   <img src="docs/images/badminton-vr-rehab.png" alt="Badminton VR Rehabilitation Game" width="85%" />
   <br />
-  <em>Figure 4: Gamified Rehabilitation — Badminton High-Zone Interception Training with Upper-Limb Kinematic Tracking.</em>
+  <em>Figure 3: Gamified Rehabilitation - Badminton High-Zone Interception Training with Upper-Limb Kinematic Tracking.</em>
 </p>
 
 ---
 
-### 🛡️ Portal 4: Administrator Portal (Enterprise Slate)
+### Portal 4: Administrator Portal (Enterprise Slate)
 - **Visual Design**: Sleek executive slate dashboard providing institutional governance.
 - **Core Features**:
   - User and clinician credential management (Patients, Therapists, Administrators).
@@ -128,7 +123,7 @@ ReMotion delivers four specialized, purpose-built workspaces under a single unif
 <p align="center">
   <img src="docs/images/webxr-device-manager.png" alt="WebXR Device Manager" width="85%" />
   <br />
-  <em>Figure 5: Hardware & WebXR Device Manager — Spatial 6-DoF Companion Integration & Stream Latency Telemetry.</em>
+  <em>Figure 4: Hardware & WebXR Device Manager - Spatial 6-DoF Companion Integration & Stream Latency Telemetry.</em>
 </p>
 
 ---
@@ -138,28 +133,30 @@ ReMotion delivers four specialized, purpose-built workspaces under a single unif
 ReMotion executes optical computer vision directly within the browser without requiring specialized external hardware or markers:
 
 ```
-Webcam Feed (60 FPS) ➔ MediaPipe HandLandmarker ➔ 21 3D Landmarks ➔ Coordinate Mirroring
-                                                                           │
-                                ┌──────────────────────────────────────────┘
-                                ▼
-         ┌──────────────────────────────────────────────┐
-         │       Real-Time Kinematic Extraction         │
-         ├──────────────────────────────────────────────┤
-         │ • Finger Curl Distance (MCP to Tip)          │
-         │ • Thumb-Index Precision Pinch Span           │
-         │ • Wrist Pronation / Supination Rotation      │
-         │ • Tremor Frequency FFT Spectrum (Hz)         │
-         │ • Dynamic Clench Calibration Thresholds      │
-         └──────────────────────┬───────────────────────┘
-                                ▼
-         ┌──────────────────────────────────────────────┐
-         │       Multi-Channel Dispatch Engine          │
-         ├──────────────────────────────────────────────┤
-         │ ➔ Canvas / Three.js Visual Biofeedback       │
-         │ ➔ WebRTC Telehealth Goniometer Overlay       │
-         │ ➔ Socket.IO Clinical Broadcast to Therapist  │
-         │ ➔ SQLite Longitudinal Recovery Storage       │
-         └──────────────────────────────────────────────┘
+Webcam Feed (60 FPS) -> MediaPipe HandLandmarker -> 21 3D Landmarks -> Coordinate Mirroring
+                                                                           |
+                                +------------------------------------------+
+                                |
+                                v
+         +----------------------------------------------+
+         |       Real-Time Kinematic Extraction         |
+         +----------------------------------------------+
+         | * Finger Curl Distance (MCP to Tip)          |
+         | * Thumb-Index Precision Pinch Span           |
+         | * Wrist Pronation / Supination Rotation      |
+         | * Tremor Frequency FFT Spectrum (Hz)         |
+         | * Dynamic Clench Calibration Thresholds      |
+         +----------------------+-----------------------+
+                                |
+                                v
+         +----------------------------------------------+
+         |       Multi-Channel Dispatch Engine          |
+         +----------------------------------------------+
+         | -> Canvas / Three.js Visual Biofeedback      |
+         | -> WebRTC Telehealth Goniometer Overlay      |
+         | -> Socket.IO Clinical Broadcast to Therapist |
+         | -> SQLite Longitudinal Recovery Storage      |
+         +----------------------------------------------+
 ```
 
 ---
@@ -250,7 +247,7 @@ This repository is pre-configured for automated deployment on **Vercel**:
 2. Or import via the Vercel Dashboard:
    - Root Directory: `./`
    - Framework Preset: **Vite**
-   - Build Command: `npm run build --prefix client`
+   - Build Command: `cd client && npm install && npm run build`
    - Output Directory: `client/dist`
 
 ---
