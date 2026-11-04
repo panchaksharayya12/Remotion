@@ -99,6 +99,11 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
   const [showLiveMonitor, setShowLiveMonitor] = useState(false);
   const [showNewPatientModal, setShowNewPatientModal] = useState(false);
+  const [showVideoCallPatientModal, setShowVideoCallPatientModal] = useState(false);
+  const [showEditPatientModal, setShowEditPatientModal] = useState(false);
+  const [editPatientForm, setEditPatientForm] = useState(null);
+  const [showEditPrescriptionModal, setShowEditPrescriptionModal] = useState(false);
+  const [editPrescriptionForm, setEditPrescriptionForm] = useState(null);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
@@ -327,6 +332,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           type: 'IMMEDIATE_START_CALL',
           callerRole: 'therapist',
           callerName: 'Dr. Rajesh Kulkarni, PT',
+          targetPatientId: currentPt?.id || 'pt_1',
           meeting,
           timestamp: Date.now()
         });
@@ -339,6 +345,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         type: 'IMMEDIATE_START_CALL',
         callerRole: 'therapist',
         callerName: 'Dr. Rajesh Kulkarni, PT',
+        targetPatientId: currentPt?.id || 'pt_1',
         meeting,
         timestamp: Date.now()
       }));
@@ -346,16 +353,17 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
 
     // 4. Fast cross-browser cloud SSE dispatch via ntfy.sh (<50ms between Edge, Chrome, Safari)
     try {
-      fetch('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1', {
-        method: 'POST',
-        body: JSON.stringify({
-          type: 'IMMEDIATE_START_CALL',
-          callerRole: 'therapist',
-          callerName: 'Dr. Rajesh Kulkarni, PT',
-          meeting,
-          timestamp: Date.now()
-        })
-      }).catch(() => {});
+      const callPayload = JSON.stringify({
+        type: 'IMMEDIATE_START_CALL',
+        callerRole: 'therapist',
+        callerName: 'Dr. Rajesh Kulkarni, PT',
+        targetPatientId: currentPt?.id || 'pt_1',
+        meeting,
+        timestamp: Date.now()
+      });
+      fetch(`https://ntfy.sh/remotion_telehealth_alert_patient_${currentPt?.id || 'pt_1'}`, { method: 'POST', body: callPayload }).catch(() => {});
+      fetch('https://ntfy.sh/remotion_telehealth_alert_patient_all', { method: 'POST', body: callPayload }).catch(() => {});
+      fetch('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1', { method: 'POST', body: callPayload }).catch(() => {});
     } catch (e) {}
 
     // 5. Serverless API call alert bridge
@@ -538,7 +546,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     // 3. Fast cross-browser SSE listener for Call Alerts
     let sseSource = null;
     try {
-      sseSource = new EventSource('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1/sse');
+      sseSource = new EventSource('https://ntfy.sh/remotion_telehealth_alert_therapist_all/sse');
       sseSource.onmessage = (event) => {
         try {
           const raw = JSON.parse(event.data);
@@ -547,9 +555,9 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
             if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
               playRingChime();
               setIncomingCall({
-                callerName: data.callerName || 'Asha Sharma (Patient)',
+                callerName: data.callerName || (data.callerPatientId ? (patients.find(p => p.id === data.callerPatientId)?.name || 'Registered Patient') : 'Patient Consultation'),
                 meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Telehealth',
-                roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                roomId: data.meeting?.room_id || `remotion-room-${data.callerPatientId || 'pt_1'}`,
                 meeting: data.meeting
               });
             }
@@ -882,6 +890,85 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     }
   };
 
+  // Save Edited Patient Clinical Record
+  const handleSaveEditPatient = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!editPatientForm || !editPatientForm.id) return;
+
+    try {
+      const updatedRecord = {
+        ...editPatientForm,
+        peak_rom: Number(editPatientForm.target_rom) || 85,
+        avg_accuracy: Number(editPatientForm.target_accuracy) || 95
+      };
+
+      setPatients(prev => prev.map(p => p.id === editPatientForm.id ? { ...p, ...updatedRecord } : p));
+      if (selectedPatientId === editPatientForm.id) {
+        setPatientDetail(prev => prev ? { ...prev, patient: { ...prev.patient, ...updatedRecord } } : null);
+      }
+
+      await api.updatePatient(editPatientForm.id, updatedRecord);
+
+      try {
+        const stored = JSON.parse(localStorage.getItem('remotion_patients_list') || '[]');
+        const idx = stored.findIndex(p => p.id === editPatientForm.id);
+        if (idx !== -1) stored[idx] = { ...stored[idx], ...updatedRecord };
+        else stored.push(updatedRecord);
+        localStorage.setItem('remotion_patients_list', JSON.stringify(stored));
+      } catch (e) {}
+
+      setShowEditPatientModal(false);
+      setToastMessage(`Clinical record for ${editPatientForm.name} updated successfully.`);
+      setTimeout(() => setToastMessage(null), 5000);
+    } catch (err) {
+      console.error('Error saving patient clinical record:', err);
+      setShowEditPatientModal(false);
+    }
+  };
+
+  // Save Edited Exercise Prescription
+  const handleSaveEditPrescription = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!editPrescriptionForm || !editPrescriptionForm.id) return;
+
+    try {
+      const payload = {
+        target_reps: Number(editPrescriptionForm.target_reps) || 15,
+        frequency: editPrescriptionForm.frequency || 'Daily',
+        difficulty: editPrescriptionForm.difficulty || 'Moderate',
+        instructions: editPrescriptionForm.instructions || '',
+        clinical_notes: editPrescriptionForm.clinical_notes || ''
+      };
+
+      setPatientDetail(prev => {
+        if (!prev || !prev.prescriptions) return prev;
+        return {
+          ...prev,
+          prescriptions: prev.prescriptions.map(p => p.id === editPrescriptionForm.id ? { ...p, ...payload } : p)
+        };
+      });
+
+      await api.updatePrescription(editPrescriptionForm.id, payload);
+
+      if (syncChannelRef.current) {
+        try {
+          syncChannelRef.current.postMessage({
+            type: 'PRESCRIPTION_UPDATED',
+            patient_id: editPrescriptionForm.patient_id,
+            prescription: { ...editPrescriptionForm, ...payload }
+          });
+        } catch (e) {}
+      }
+
+      setShowEditPrescriptionModal(false);
+      setToastMessage(`Prescription updated successfully.`);
+      setTimeout(() => setToastMessage(null), 5000);
+    } catch (err) {
+      console.error('Error saving prescription:', err);
+      setShowEditPrescriptionModal(false);
+    }
+  };
+
   // Register New Patient directly into caseload
   const handleRegisterNewPatient = async (e) => {
     e.preventDefault();
@@ -985,6 +1072,14 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
 
           <div className="flex flex-wrap items-center gap-3">
             <button
+              onClick={() => setShowVideoCallPatientModal(true)}
+              className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-400 text-white font-bold text-xs shadow-lg shadow-blue-500/25 transition-all cursor-pointer"
+            >
+              <Video className="w-4 h-4" />
+              <span>Start Video Call</span>
+            </button>
+
+            <button
               onClick={() => setShowNewPatientModal(true)}
               className="flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-white/10 text-white hover:bg-white/20 border border-white/20 text-xs font-bold transition-all cursor-pointer"
             >
@@ -1078,16 +1173,11 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                   </button>
 
                   <button
-                    onClick={() => startImmediateCall({
-                      title: `Immediate Clinical Review with ${selectedPatient?.name || 'Asha Sharma'}`,
-                      patient_id: selectedPatient?.id || 'pt_1',
-                      patient_name: selectedPatient?.name || 'Asha Sharma',
-                      room_id: `remotion-room-${selectedPatient?.id || 'pt_1'}`
-                    })}
+                    onClick={() => setShowVideoCallPatientModal(true)}
                     className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/25 transition-all cursor-pointer"
                   >
                     <Video className="w-4 h-4" />
-                    <span>Start Video Meeting ({selectedPatient?.name || 'Asha Sharma'})</span>
+                    <span>Start Video Meeting</span>
                   </button>
                 </div>
               </div>
@@ -1268,73 +1358,148 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         {/* ========================================================================= */}
         {/* TAB 3: PATIENT DETAILS                                                    */}
         {/* ========================================================================= */}
-        {activeTab === 'details' && selectedPatient && (
+        {activeTab === 'details' && (
           <div className="space-y-6 animate-fadeIn">
-            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 border-b border-slate-100 gap-4 mb-6">
-                <div>
-                  <div className="flex items-center space-x-3">
-                    <h2 className="text-2xl font-bold text-slate-900">{selectedPatient.name}</h2>
-                    <span className="text-xs font-mono bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-2.5 py-0.5 rounded-full">
-                      {selectedPatient.recovery_level || 'Stage 4 Recovery'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-blue-800 font-medium mt-1">
-                    {selectedPatient.condition} • Affected: <span className="font-bold">{selectedPatient.affected_side || 'Left Upper Limb'}</span> • Age: 58 • Onset: 4 months ago
-                  </p>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => handleOpenChat(selectedPatient)}
-                    className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md shadow-teal-600/20 cursor-pointer"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>Clinician Chat</span>
-                  </button>
-
-                  <button
-                    onClick={() => startImmediateCall({
-                      title: `Clinical Review with ${selectedPatient.name}`,
-                      patient_id: selectedPatient.id,
-                      patient_name: selectedPatient.name,
-                      room_id: `remotion-room-${selectedPatient.id}`
-                    })}
-                    className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 cursor-pointer"
-                  >
-                    <Video className="w-3.5 h-3.5" />
-                    <span>Start Video Meeting</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Clinical Metrics Summary */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 text-xs font-mono">
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                  <span className="text-slate-500 text-[10px] block font-bold">TOTAL SESSIONS</span>
-                  <span className="text-xl font-black text-slate-900">{selectedPatient.total_sessions || 6} Completed</span>
-                </div>
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                  <span className="text-slate-500 text-[10px] block font-bold">AVG ACCURACY</span>
-                  <span className="text-xl font-black text-emerald-600">{Math.round(selectedPatient.avg_accuracy || 94)}%</span>
-                </div>
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                  <span className="text-slate-500 text-[10px] block font-bold">PEAK ACTIVE ROM</span>
-                  <span className="text-xl font-black text-blue-600">{selectedPatient.peak_rom || 82}°</span>
-                </div>
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                  <span className="text-slate-500 text-[10px] block font-bold">FUGL-MEYER SCORE</span>
-                  <span className="text-xl font-black text-purple-600">46 / 66</span>
-                </div>
-              </div>
-
-              {/* Longitudinal Recovery Graph */}
-              <ClinicalRecoveryBarChart
-                patientName={selectedPatient.name}
-                targetRom={85}
-                baselineRom={42}
-              />
+            {/* Caseload Patient Switcher Tabs (Individual Distinct Section For Each Patient) */}
+            <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-none">
+              {patients.map(pt => (
+                <button
+                  key={pt.id}
+                  onClick={() => {
+                    setSelectedPatientId(pt.id);
+                  }}
+                  className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+                    (selectedPatient?.id === pt.id)
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>{pt.name}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+                    selectedPatient?.id === pt.id ? 'bg-blue-700 text-blue-100' : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {pt.recovery_level ? pt.recovery_level.split(' ')[0] : 'Active'}
+                  </span>
+                </button>
+              ))}
+              <button
+                onClick={() => setShowNewPatientModal(true)}
+                className="px-3.5 py-2.5 rounded-2xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 flex items-center space-x-1.5 transition-all cursor-pointer whitespace-nowrap"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Add Patient</span>
+              </button>
             </div>
+
+            {selectedPatient && (
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 border-b border-slate-100 gap-4 mb-6">
+                  <div>
+                    <div className="flex items-center space-x-3">
+                      <h2 className="text-2xl font-bold text-slate-900">{selectedPatient.name}</h2>
+                      <span className="text-xs font-mono bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold px-2.5 py-0.5 rounded-full">
+                        {selectedPatient.recovery_level || 'Stage 4 Recovery'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-blue-800 font-medium mt-1">
+                      {selectedPatient.condition} • Affected: <span className="font-bold">{selectedPatient.affected_side || 'Left Upper Limb'}</span> • Age: {selectedPatient.age || 58}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setEditPatientForm({
+                          id: selectedPatient.id,
+                          name: selectedPatient.name || '',
+                          condition: selectedPatient.condition || '',
+                          recovery_level: selectedPatient.recovery_level || 'Stage 4 Intermediate',
+                          affected_side: selectedPatient.affected_side || 'Left Upper Limb',
+                          primary_language: selectedPatient.primary_language || 'en',
+                          target_rom: selectedPatient.peak_rom || 85,
+                          target_accuracy: Math.round(selectedPatient.avg_accuracy || 95),
+                          emergency_contact: selectedPatient.emergency_contact || '+91 98450 99991',
+                          clinical_notes: selectedPatient.notes || 'Rehabilitation focus: Active flexion & extension, functional reach.'
+                        });
+                        setShowEditPatientModal(true);
+                      }}
+                      className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm cursor-pointer"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Edit Patient Record</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleOpenChat(selectedPatient)}
+                      className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md shadow-teal-600/20 cursor-pointer"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Clinician Chat</span>
+                    </button>
+
+                    <button
+                      onClick={() => startImmediateCall({
+                        title: `Clinical Review with ${selectedPatient.name}`,
+                        patient_id: selectedPatient.id,
+                        patient_name: selectedPatient.name,
+                        room_id: `remotion-room-${selectedPatient.id}`
+                      })}
+                      className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 cursor-pointer"
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>Start Video Meeting</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Patient Dossier Details Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 text-xs font-mono">
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold uppercase">PRIMARY LANGUAGE</span>
+                    <span className="font-bold text-slate-900 uppercase">{selectedPatient.primary_language || 'Hindi (hi)'}</span>
+                  </div>
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold uppercase">EMERGENCY CONTACT</span>
+                    <span className="font-bold text-slate-900">{selectedPatient.emergency_contact || '+91 98450 99991'}</span>
+                  </div>
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold uppercase">TARGET ROM</span>
+                    <span className="font-bold text-blue-600">{selectedPatient.peak_rom || 85}° Active</span>
+                  </div>
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold uppercase">TARGET ACCURACY</span>
+                    <span className="font-bold text-emerald-600">{Math.round(selectedPatient.avg_accuracy || 95)}% Threshold</span>
+                  </div>
+                </div>
+
+                {/* Clinical Metrics Summary */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 text-xs font-mono">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold">TOTAL SESSIONS</span>
+                    <span className="text-xl font-black text-slate-900">{selectedPatient.total_sessions || 6} Completed</span>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold">AVG ACCURACY</span>
+                    <span className="text-xl font-black text-emerald-600">{Math.round(selectedPatient.avg_accuracy || 94)}%</span>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold">PEAK ACTIVE ROM</span>
+                    <span className="text-xl font-black text-blue-600">{selectedPatient.peak_rom || 82}°</span>
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                    <span className="text-slate-500 text-[10px] block font-bold">FUGL-MEYER SCORE</span>
+                    <span className="text-xl font-black text-purple-600">46 / 66</span>
+                  </div>
+                </div>
+
+                {/* Longitudinal Recovery Graph */}
+                <ClinicalRecoveryBarChart
+                  patientName={selectedPatient.name}
+                  targetRom={Number(selectedPatient.peak_rom) || 85}
+                  baselineRom={42}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -1343,6 +1508,31 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         {/* ========================================================================= */}
         {activeTab === 'prescriptions' && (
           <div className="space-y-6 animate-fadeIn">
+            {/* Caseload Patient Switcher for Prescriptions */}
+            <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-none">
+              {patients.map(pt => (
+                <button
+                  key={pt.id}
+                  onClick={() => {
+                    setSelectedPatientId(pt.id);
+                    setPrescriptionForm(prev => ({ ...prev, patient_id: pt.id }));
+                  }}
+                  className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+                    (selectedPatient?.id === pt.id)
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <span>{pt.name}</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+                    selectedPatient?.id === pt.id ? 'bg-blue-700 text-blue-100' : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {pt.condition ? pt.condition.split(' ')[0] : 'Active'}
+                  </span>
+                </button>
+              ))}
+            </div>
+
             {/* Prescription Builder Form */}
             <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
               <div className="pb-4 border-b border-slate-100 mb-6">
@@ -1499,6 +1689,27 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                     </div>
 
                     <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => {
+                          setEditPrescriptionForm({
+                            id: p.id,
+                            patient_id: p.patient_id || selectedPatient?.id || 'pt_1',
+                            exercise_id: p.exercise_id || 'ex_squeeze_fill',
+                            exercise_name: p.exercise_name || 'Rehabilitation Routine',
+                            target_reps: p.target_reps || 15,
+                            frequency: p.frequency || 'Daily',
+                            difficulty: p.difficulty || 'Moderate',
+                            instructions: p.instructions || '',
+                            clinical_notes: p.clinical_notes || ''
+                          });
+                          setShowEditPrescriptionModal(true);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-900 font-bold text-xs flex items-center space-x-1 cursor-pointer"
+                      >
+                        <Edit className="w-3 h-3" />
+                        <span>Edit</span>
+                      </button>
+
                       {p.status === 'active' ? (
                         <button
                           onClick={() => handleUpdateStatus(p.id, 'paused')}
@@ -1801,7 +2012,22 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                         className="flex-1 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-sm shadow-blue-600/20 cursor-pointer"
                       >
                         <Video className="w-3.5 h-3.5" />
-                        <span>Start Video Meeting</span>
+                        <span>Start Video Call</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setScheduleForm(prev => ({
+                            ...prev,
+                            patient_id: pt.id,
+                            title: `Video Consultation with ${pt.name}`
+                          }));
+                          setShowScheduleModal(true);
+                        }}
+                        className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center space-x-1 cursor-pointer"
+                      >
+                        <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Schedule</span>
                       </button>
                     </div>
                   </div>
@@ -2450,6 +2676,393 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                 >
                   <Calendar className="w-4 h-4" />
                   <span>Confirm & Schedule</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Video Call Patient Directory Modal */}
+      {showVideoCallPatientModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-slideUp max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4 shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                  <Video className="w-5 h-5 text-blue-700" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Start Telehealth Video Call</h3>
+                  <p className="text-xs text-slate-500 font-mono">Select registered patient to launch instant peer-to-peer call</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowVideoCallPatientModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center cursor-pointer transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-3 flex-1 pr-1">
+              {patients.map(pt => (
+                <div
+                  key={pt.id}
+                  className="p-4 rounded-2xl bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-bold flex items-center justify-center text-sm shadow-sm shrink-0">
+                      {pt.name ? pt.name.split(' ').map(n=>n[0]).join('').substring(0,2) : 'PT'}
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-sm text-slate-900">{pt.name}</span>
+                        <span className="text-[10px] font-mono bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">
+                          {pt.recovery_level ? pt.recovery_level.split(' ')[0] : 'Active'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
+                        {pt.condition} • Compliance: {pt.compliance || '94%'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 self-end sm:self-auto shrink-0">
+                    <button
+                      onClick={() => {
+                        setShowVideoCallPatientModal(false);
+                        setScheduleForm(prev => ({
+                          ...prev,
+                          patient_id: pt.id,
+                          title: `Video Consultation with ${pt.name}`
+                        }));
+                        setShowScheduleModal(true);
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs flex items-center space-x-1 cursor-pointer transition-colors"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Schedule</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setShowVideoCallPatientModal(false);
+                        startImmediateCall({
+                          title: `Clinical Video Review with ${pt.name}`,
+                          patient_id: pt.id,
+                          patient_name: pt.name,
+                          room_id: `remotion-room-${pt.id}`
+                        });
+                      }}
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-blue-600/20 cursor-pointer transition-all"
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>Call Now</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-4 border-t border-slate-100 flex justify-end shrink-0 mt-3">
+              <button
+                onClick={() => setShowVideoCallPatientModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Patient Clinical Record Modal */}
+      {showEditPatientModal && editPatientForm && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-slideUp max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                  <Edit className="w-5 h-5 text-blue-700" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Edit Patient Clinical Profile</h3>
+                  <p className="text-xs text-slate-500 font-mono">Updating clinical records for {editPatientForm.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowEditPatientModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center cursor-pointer transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditPatient} className="space-y-4 text-xs font-sans">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Patient Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editPatientForm.name}
+                  onChange={(e) => setEditPatientForm({ ...editPatientForm, name: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Primary Diagnosis / Clinical Condition *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editPatientForm.condition}
+                  onChange={(e) => setEditPatientForm({ ...editPatientForm, condition: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Recovery Stage / Level
+                  </label>
+                  <select
+                    value={editPatientForm.recovery_level}
+                    onChange={(e) => setEditPatientForm({ ...editPatientForm, recovery_level: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  >
+                    <option value="Stage 1 Acute Flaccid">Stage 1 Acute Flaccid</option>
+                    <option value="Stage 2 Spasticity Emerging">Stage 2 Spasticity Emerging</option>
+                    <option value="Stage 3 Peak Spasticity">Stage 3 Peak Spasticity</option>
+                    <option value="Stage 4 Intermediate">Stage 4 Intermediate Recovery</option>
+                    <option value="Stage 5 Advanced Combinations">Stage 5 Advanced Combinations</option>
+                    <option value="Stage 6 Near-Normal Speed">Stage 6 Near-Normal Speed</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Affected Side
+                  </label>
+                  <select
+                    value={editPatientForm.affected_side}
+                    onChange={(e) => setEditPatientForm({ ...editPatientForm, affected_side: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  >
+                    <option value="Left Upper Limb">Left Upper Limb</option>
+                    <option value="Right Upper Limb">Right Upper Limb</option>
+                    <option value="Bilateral Upper Limb">Bilateral Upper Limb</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Target ROM (Degrees)
+                  </label>
+                  <input
+                    type="number"
+                    min="20"
+                    max="180"
+                    value={editPatientForm.target_rom}
+                    onChange={(e) => setEditPatientForm({ ...editPatientForm, target_rom: Number(e.target.value) || 85 })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Target Accuracy (%)
+                  </label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="100"
+                    value={editPatientForm.target_accuracy}
+                    onChange={(e) => setEditPatientForm({ ...editPatientForm, target_accuracy: Number(e.target.value) || 95 })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Primary Language
+                  </label>
+                  <select
+                    value={editPatientForm.primary_language}
+                    onChange={(e) => setEditPatientForm({ ...editPatientForm, primary_language: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  >
+                    <option value="en">English (en)</option>
+                    <option value="hi">Hindi (hi)</option>
+                    <option value="kn">Kannada (kn)</option>
+                    <option value="ta">Tamil (ta)</option>
+                    <option value="te">Telugu (te)</option>
+                    <option value="mr">Marathi (mr)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Emergency Contact
+                  </label>
+                  <input
+                    type="text"
+                    value={editPatientForm.emergency_contact}
+                    onChange={(e) => setEditPatientForm({ ...editPatientForm, emergency_contact: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Clinical Evaluation & History Notes
+                </label>
+                <textarea
+                  rows={3}
+                  value={editPatientForm.clinical_notes}
+                  onChange={(e) => setEditPatientForm({ ...editPatientForm, clinical_notes: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-sans"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setShowEditPatientModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/30 flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Save Clinical Record</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Exercise Prescription Modal */}
+      {showEditPrescriptionModal && editPrescriptionForm && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-200 animate-slideUp">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-5">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                  <Edit className="w-5 h-5 text-blue-700" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Edit Exercise Prescription</h3>
+                  <p className="text-xs text-slate-500 font-mono">{editPrescriptionForm.exercise_name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowEditPrescriptionModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center cursor-pointer transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditPrescription} className="space-y-4 text-xs font-sans">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Target Repetitions
+                  </label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="50"
+                    value={editPrescriptionForm.target_reps}
+                    onChange={(e) => setEditPrescriptionForm({ ...editPrescriptionForm, target_reps: Number(e.target.value) || 10 })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                    Frequency
+                  </label>
+                  <select
+                    value={editPrescriptionForm.frequency}
+                    onChange={(e) => setEditPrescriptionForm({ ...editPrescriptionForm, frequency: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                  >
+                    <option value="Daily">Daily (Standard Rehabilitation)</option>
+                    <option value="Twice Daily">Twice Daily (Intensive)</option>
+                    <option value="3x Weekly">3x Weekly (Maintenance)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Difficulty Level
+                </label>
+                <select
+                  value={editPrescriptionForm.difficulty}
+                  onChange={(e) => setEditPrescriptionForm({ ...editPrescriptionForm, difficulty: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
+                >
+                  <option value="Gentle">Gentle (Reduced resistance)</option>
+                  <option value="Moderate">Moderate (Standard protocol)</option>
+                  <option value="Advanced">Advanced (High precision & speed)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Patient Instructions
+                </label>
+                <textarea
+                  rows={2}
+                  value={editPrescriptionForm.instructions}
+                  onChange={(e) => setEditPrescriptionForm({ ...editPrescriptionForm, instructions: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-sans"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase font-mono mb-1">
+                  Therapist Clinical Notes
+                </label>
+                <textarea
+                  rows={2}
+                  value={editPrescriptionForm.clinical_notes}
+                  onChange={(e) => setEditPrescriptionForm({ ...editPrescriptionForm, clinical_notes: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-sans"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex items-center justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setShowEditPrescriptionModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-600/30 flex items-center space-x-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Save Prescription</span>
                 </button>
               </div>
             </form>

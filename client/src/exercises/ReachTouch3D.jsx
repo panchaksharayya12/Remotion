@@ -427,7 +427,7 @@ export default function ReachTouch3D({
   };
 
   return (
-    <div className="bg-[#0c1322] border border-cyan-500/30 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+    <div className="w-full min-h-screen flex flex-col justify-between bg-[#070d18] border border-cyan-500/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
       {/* Top Header & Emergency Stop */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
         <div>

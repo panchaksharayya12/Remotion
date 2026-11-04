@@ -407,16 +407,16 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
     // 4. Fast cross-browser cloud dispatch via ntfy.sh (<50ms between Edge, Chrome, Safari)
     try {
-      fetch('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1', {
-        method: 'POST',
-        body: JSON.stringify({
-          type: 'IMMEDIATE_START_CALL',
-          callerRole: 'patient',
-          callerName: ptName,
-          meeting,
-          timestamp: Date.now()
-        })
-      }).catch(() => {});
+      const callPayload = JSON.stringify({
+        type: 'IMMEDIATE_START_CALL',
+        callerRole: 'patient',
+        callerName: ptName,
+        callerPatientId: myPatientId,
+        meeting,
+        timestamp: Date.now()
+      });
+      fetch('https://ntfy.sh/remotion_telehealth_alert_therapist_all', { method: 'POST', body: callPayload }).catch(() => {});
+      fetch('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1', { method: 'POST', body: callPayload }).catch(() => {});
     } catch (e) {}
 
     // 5. Serverless API call alert bridge
@@ -561,18 +561,20 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     // 3. Fast cross-browser SSE listener for Call Alerts
     let sseSource = null;
     try {
-      sseSource = new EventSource('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1/sse');
+      const channelUrl = `https://ntfy.sh/remotion_telehealth_alert_patient_${myPatientId}/sse`;
+      sseSource = new EventSource(channelUrl);
       sseSource.onmessage = (event) => {
         try {
           const raw = JSON.parse(event.data);
           if (raw.event === 'message' && raw.message) {
             const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
             if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
+              if (data.targetPatientId && data.targetPatientId !== myPatientId && data.targetPatientId !== 'all') return;
               playRingChime();
               setIncomingCall({
                 callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
                 meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
-                roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                roomId: data.meeting?.room_id || `remotion-room-${myPatientId}`,
                 meeting: data.meeting
               });
             }
@@ -622,7 +624,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     // Active ntfy.sh JSON Polling fallback for call alerts
     const ntfyPollInterval = setInterval(async () => {
       try {
-        const res = await fetch('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1/json?since=20s');
+        const res = await fetch(`https://ntfy.sh/remotion_telehealth_alert_patient_${myPatientId}/json?since=20s`);
         const text = await res.text();
         const lines = text.trim().split('\n');
         for (const line of lines) {
@@ -632,13 +634,14 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             if (raw.event === 'message' && raw.message) {
               const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
               if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
+                if (data.targetPatientId && data.targetPatientId !== myPatientId && data.targetPatientId !== 'all') continue;
                 setIncomingCall(prev => {
                   if (prev && prev.roomId === data.meeting?.room_id) return prev;
                   playRingChime();
                   return {
                     callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
                     meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
-                    roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                    roomId: data.meeting?.room_id || `remotion-room-${myPatientId}`,
                     meeting: data.meeting
                   };
                 });
@@ -841,7 +844,6 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             {[
               { id: 'dashboard', label: 'My Dashboard', icon: Activity },
               { id: 'exercises', label: 'Prescribed Exercises', icon: Dumbbell },
-              { id: 'games', label: 'Assigned Games', icon: Gamepad2 },
               { id: 'chat', label: 'Clinician Chat', icon: MessageSquare },
               { id: 'progress', label: 'Recovery Progress', icon: BarChart3 },
               { id: 'appointments', label: 'Appointments', icon: Calendar },
@@ -1308,46 +1310,6 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
           </div>
         )}
 
-        {/* ======================================================== */}
-        {/* TAB 3: ASSIGNED GAMES (ONLY Prescribed Games)             */}
-        {/* ======================================================== */}
-        {activeTab === 'games' && (
-          <div className="space-y-6 animate-fadeIn">
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900 font-display">Assigned Rehabilitation Games</h2>
-              <p className="text-xs text-slate-500 mt-1">
-                3D sports simulations prescribed by your physical therapist for motor coordination and active range of motion.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {assignedGames.map(game => (
-                <div
-                  key={game.id}
-                  onClick={() => setSelectedGame(game)}
-                  className="bg-white rounded-3xl p-5 border border-slate-200 hover:border-teal-400 shadow-sm hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between group"
-                >
-                  <div>
-                    <div className="h-40 rounded-2xl bg-slate-900 mb-4 overflow-hidden relative">
-                      <GameThumbnail gameId={game.id} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                      <div className="absolute top-3 right-3 bg-slate-950/80 px-2.5 py-0.5 rounded-full text-[10px] font-mono text-cyan-300 font-bold border border-cyan-800">
-                        {game.reps} Target Reps
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-mono text-teal-600 font-bold uppercase">{game.cat}</span>
-                    <h4 className="text-lg font-bold text-slate-900 group-hover:text-teal-700 transition-colors mt-1">{game.title}</h4>
-                    <p className="text-xs text-slate-500 mt-2 leading-relaxed">{game.desc}</p>
-                  </div>
-
-                  <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-teal-600">
-                    <span>Start 3D Session</span>
-                    <Play className="w-4 h-4 fill-current" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* ======================================================== */}
         {/* TAB 4: CLINICIAN CHAT (Patient to Therapist)             */}
@@ -1696,10 +1658,10 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
       </main>
 
-      {/* Fullscreen Dedicated Exercise Theater Modal */}
+      {/* Fullscreen Dedicated Exercise Theater Modal - Full Screen of Tab Viewport */}
       {activeExercise && (
-        <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex flex-col items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fadeIn">
-          <div className="w-full max-w-5xl my-auto">
+        <div className="fixed inset-0 z-50 bg-[#070d18] w-screen h-screen flex flex-col p-0 m-0 overflow-y-auto overflow-x-hidden animate-fadeIn">
+          <div className="w-full h-full min-h-screen flex flex-col flex-1 p-2 sm:p-4">
             {activeExercise === 'squeeze_fill' && (
               <SqueezeFillCanvas
                 targetReps={15}

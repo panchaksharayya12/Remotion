@@ -298,16 +298,23 @@ class ApiService {
 
     if (endpoint.startsWith('/therapist/patients/')) {
       const ptId = endpoint.split('/').pop();
+      if (options.method === 'PUT' || options.method === 'PATCH') {
+        const idx = CLINICAL_DATASETS.patients.findIndex(p => p.id === ptId);
+        if (idx !== -1) {
+          CLINICAL_DATASETS.patients[idx] = { ...CLINICAL_DATASETS.patients[idx], ...body };
+          return { success: true, patient: CLINICAL_DATASETS.patients[idx], patients: CLINICAL_DATASETS.patients };
+        }
+      }
       const pt = CLINICAL_DATASETS.patients.find(p => p.id === ptId) || CLINICAL_DATASETS.patients[0];
       return {
         patient: pt,
-        prescriptions: CLINICAL_DATASETS.prescriptions.filter(p => p.patient_id === pt.id || p.patient_id === 'pt_1'),
+        prescriptions: CLINICAL_DATASETS.prescriptions.filter(p => p.patient_id === pt.id),
         recovery_metrics: [
           { session: 'Baseline', rom: 45, accuracy: 72 },
           { session: 'Week 1', rom: 58, accuracy: 80 },
           { session: 'Week 2', rom: 68, accuracy: 86 },
           { session: 'Week 3', rom: 76, accuracy: 91 },
-          { session: 'Current', rom: 82, accuracy: 94 }
+          { session: 'Current', rom: pt.peak_rom || 82, accuracy: pt.avg_accuracy || 94 }
         ]
       };
     }
@@ -492,6 +499,13 @@ class ApiService {
 
   async updatePrescription(id, updates) {
     return this.request(`/therapist/prescriptions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates)
+    });
+  }
+
+  async updatePatient(id, updates) {
+    return this.request(`/therapist/patients/${id}`, {
       method: 'PUT',
       body: JSON.stringify(updates)
     });

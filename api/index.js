@@ -495,9 +495,26 @@ export default async function handler(req, res) {
   if (pathname === '/patient/dashboard') {
     const ptIdQuery = url.searchParams.get('patient_id') || 'pt_1';
     const targetPt = PATIENTS.find(p => p.id === ptIdQuery || p.user_id === ptIdQuery) || PATIENTS[0];
-    const patientPrescriptions = PRESCRIPTIONS.filter(
-      p => (p.patient_id === targetPt.id || p.patient_id === 'pt_1') && p.status !== 'inactive'
+    let patientPrescriptions = PRESCRIPTIONS.filter(
+      p => p.patient_id === targetPt.id && p.status !== 'inactive'
     );
+    if (patientPrescriptions.length === 0) {
+      patientPrescriptions = [
+        {
+          id: 'rec_' + targetPt.id + '_default',
+          patient_id: targetPt.id,
+          exercise_id: 'ex_squeeze_fill',
+          exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+          target_reps: 15,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: `Personalized neuro-motor grasp rehabilitation tailored for ${targetPt.name}.`,
+          clinical_notes: `Targeting voluntary motor control for: ${targetPt.condition}.`,
+          status: 'active',
+          created_at: new Date().toISOString()
+        }
+      ];
+    }
     return res.status(200).json({
       patient: {
         ...targetPt,
@@ -703,19 +720,32 @@ export default async function handler(req, res) {
     return res.status(200).json({ patients: PATIENTS });
   }
 
-  // 6. Therapist Patient Details
+  // 6. Therapist Patient Details & Record Updates
   if (pathname.startsWith('/therapist/patients/')) {
     const ptId = pathname.split('/').pop();
+    if (req.method === 'PUT' || req.method === 'PATCH') {
+      const idx = PATIENTS.findIndex(p => p.id === ptId);
+      if (idx !== -1) {
+        PATIENTS[idx] = {
+          ...PATIENTS[idx],
+          ...body,
+          updated_at: new Date().toISOString()
+        };
+        return res.status(200).json({ success: true, patient: PATIENTS[idx], patients: PATIENTS });
+      }
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
     const patient = PATIENTS.find(p => p.id === ptId) || PATIENTS[0];
     return res.status(200).json({
       patient,
-      prescriptions: PRESCRIPTIONS.filter(p => p.patient_id === patient.id || p.patient_id === 'pt_1'),
+      prescriptions: PRESCRIPTIONS.filter(p => p.patient_id === patient.id),
       recovery_metrics: [
         { session: 'Baseline', rom: 45, accuracy: 72 },
         { session: 'Week 1', rom: 58, accuracy: 80 },
         { session: 'Week 2', rom: 68, accuracy: 86 },
         { session: 'Week 3', rom: 76, accuracy: 91 },
-        { session: 'Current', rom: 82, accuracy: 94 }
+        { session: 'Current', rom: patient.peak_rom || 82, accuracy: patient.avg_accuracy || 94 }
       ]
     });
   }
@@ -789,8 +819,12 @@ export default async function handler(req, res) {
       const rec = PRESCRIPTIONS.find(p => p.id === recId);
       if (rec) {
         if (body.status) rec.status = body.status;
-        if (body.target_reps) rec.target_reps = Number(body.target_reps);
+        if (body.target_reps !== undefined) rec.target_reps = Number(body.target_reps);
         if (body.frequency) rec.frequency = body.frequency;
+        if (body.difficulty) rec.difficulty = body.difficulty;
+        if (body.instructions) rec.instructions = body.instructions;
+        if (body.clinical_notes) rec.clinical_notes = body.clinical_notes;
+        rec.updated_at = new Date().toISOString();
       }
       return res.status(200).json({ success: true, prescription: rec, prescriptions: PRESCRIPTIONS });
     }

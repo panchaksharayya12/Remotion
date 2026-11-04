@@ -629,28 +629,73 @@ export default function SqueezeFillCanvas({
     setIsExerciseRunning(true);
   };
 
+  // Squeeze Interaction Handlers (Mouse / Touch / Pointer / Spacebar / Manual)
+  const isHoldingRef = useRef(false);
+
+  const handleSqueezeDown = () => {
+    if (!isExerciseRunning || isComplete) return;
+    isHoldingRef.current = true;
+    setClosureC(0.90);
+    setMovementPhase('HOLDING_PEAK');
+    soundFX.playSqueeze();
+
+    // Burst initial droplets
+    for (let i = 0; i < 16; i++) {
+      particlesRef.current.push({
+        x: 230 + (Math.random() - 0.5) * 60,
+        y: 190 + (Math.random() - 0.5) * 40,
+        vx: (Math.random() - 0.5) * 6,
+        vy: Math.random() * 5 + 3,
+        radius: Math.random() * 3 + 2,
+        alpha: 1
+      });
+    }
+  };
+
+  const handleSqueezeUp = () => {
+    if (!isHoldingRef.current) return;
+    isHoldingRef.current = false;
+    setClosureC(0.08);
+    setMovementPhase('RELEASING');
+    soundFX.playSplash();
+
+    if (isExerciseRunning && !isComplete) {
+      setRepsCompleted(prev => {
+        const next = prev + 1;
+        targetWaterLevelRef.current = Math.min(1.0, next / targetReps);
+
+        ripplesRef.current.push({
+          x: 430,
+          y: 350 - targetWaterLevelRef.current * 180,
+          radius: 5,
+          alpha: 1
+        });
+
+        if (next >= targetReps) triggerCompletion(next);
+        return next;
+      });
+    }
+  };
+
+  const triggerManualRep = () => {
+    if (!isExerciseRunning || isComplete) return;
+    handleSqueezeDown();
+    setTimeout(() => {
+      handleSqueezeUp();
+    }, 280);
+  };
+
   // Keyboard Spacebar Simulation Fallback
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.code === 'Space' && !e.repeat) {
-        setClosureC(0.85);
-        soundFX.playSqueeze();
+        handleSqueezeDown();
       }
     };
 
     const handleKeyUp = (e) => {
       if (e.code === 'Space') {
-        setClosureC(0.15);
-        soundFX.playSplash();
-
-        if (isExerciseRunning && !isComplete) {
-          setRepsCompleted(prev => {
-            const next = prev + 1;
-            targetWaterLevelRef.current = Math.min(1.0, next / targetReps);
-            if (next >= targetReps) triggerCompletion(next);
-            return next;
-          });
-        }
+        handleSqueezeUp();
       }
     };
 
@@ -663,7 +708,7 @@ export default function SqueezeFillCanvas({
   }, [isExerciseRunning, isComplete, targetReps, elapsedSeconds]);
 
   return (
-    <div className="bg-[#0b1322] border border-teal-500/30 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+    <div className="w-full min-h-screen flex flex-col justify-between bg-[#070d18] border border-teal-500/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
       {/* Exercise Control Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
         <div>
@@ -801,12 +846,16 @@ export default function SqueezeFillCanvas({
       </div>
 
       {/* Main Interactive Canvas Area */}
-      <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 flex justify-center items-center shadow-inner">
+      <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 flex flex-col justify-center items-center shadow-inner flex-1 w-full min-h-[440px] max-h-[66vh] select-none">
         <canvas
           ref={canvasRef}
-          width={540}
+          width={640}
           height={440}
-          className="w-full max-w-[540px] h-[440px] object-contain"
+          onPointerDown={handleSqueezeDown}
+          onPointerUp={handleSqueezeUp}
+          onPointerLeave={handleSqueezeUp}
+          className="w-full max-w-[640px] h-[440px] object-contain cursor-pointer active:scale-[0.99] transition-transform"
+          title="Click and hold anywhere on the virtual sponge to squeeze, release to score!"
         />
 
         {/* Hidden video element feeding MediaPipe and Canvas */}
@@ -819,9 +868,36 @@ export default function SqueezeFillCanvas({
 
         {/* Spacebar or Keyboard Simulation Help Pill */}
         <div className="absolute bottom-3 left-4 pointer-events-none">
-          <span className="px-3 py-1 rounded-full bg-slate-950/80 border border-slate-800 text-[10px] font-mono text-slate-400">
-            Hold Spacebar or squeeze hand to clench • Release to fill volume
+          <span className="px-3 py-1 rounded-full bg-slate-950/90 border border-slate-800 text-[10px] font-mono text-cyan-300">
+            Click & hold sponge, squeeze hand to camera, or press Spacebar
           </span>
+        </div>
+      </div>
+
+      {/* Tactile Squeeze Action Bar */}
+      <div className="mt-3 p-3 bg-slate-900/90 border border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center space-x-2 text-xs font-mono text-slate-300">
+          <span className="w-2.5 h-2.5 rounded-full bg-teal-400 animate-pulse"></span>
+          <span>Squeeze Controls: Webcam Hand Clench • Mouse / Touch Hold • Keyboard Spacebar</span>
+        </div>
+
+        <div className="flex items-center space-x-2.5">
+          <button
+            onPointerDown={handleSqueezeDown}
+            onPointerUp={handleSqueezeUp}
+            onPointerLeave={handleSqueezeUp}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-lg shadow-teal-500/25 active:scale-95 transition-all select-none cursor-pointer flex items-center space-x-1.5"
+          >
+            <Zap className="w-4 h-4 fill-current" />
+            <span>Press & Hold Sponge</span>
+          </button>
+
+          <button
+            onClick={triggerManualRep}
+            className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-300 font-bold text-xs border border-teal-500/30 transition-all select-none cursor-pointer"
+          >
+            +1 Quick Rep
+          </button>
         </div>
       </div>
 
