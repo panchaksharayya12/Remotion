@@ -11,6 +11,7 @@ import { api } from '../services/api';
 import VideoMeetingModal from '../components/VideoMeetingModal';
 import RemoAssistant from '../components/RemoAssistant';
 import ClinicalRecoveryBarChart from '../components/ClinicalRecoveryBarChart';
+import PlayableGameModal from './PlayableGameModal';
 
 const THERAPIST_TABS = [
   { id: 'overview', label: 'Overview', icon: Activity },
@@ -101,6 +102,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
+  const [selectedGame, setSelectedGame] = useState(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -108,6 +110,16 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const syncChannelRef = useRef(null);
   const messagesEndRef = useRef(null);
+
+  // Helper: Verify if an incoming message strictly belongs to the currently active patient thread
+  const doesMessageMatchPatient = (msg, ptId, ptUserId) => {
+    if (!msg) return false;
+    if (msg.patient_id && (msg.patient_id === ptId || msg.patient_id === ptUserId)) return true;
+    if (msg.receiver_id && (msg.receiver_id === ptId || msg.receiver_id === ptUserId)) return true;
+    if (msg.sender_id && (msg.sender_id === ptId || msg.sender_id === ptUserId)) return true;
+    if (ptId === 'pt_1' && (!msg.patient_id || msg.receiver_id === 'u_patient_1' || msg.sender_id === 'u_patient_1')) return true;
+    return false;
+  };
 
   // New Patient Form State
   const [newPatientForm, setNewPatientForm] = useState({
@@ -1578,15 +1590,24 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
 
                     <div className="mt-4 pt-3 border-t border-slate-200 flex items-center justify-between">
                       <span className="text-[11px] font-mono text-emerald-600 font-bold">Biofeedback: Active</span>
-                      <button
-                        onClick={() => {
-                          setToastMessage(`Assigned ${game.title} to ${selectedPatient?.name || 'Asha Sharma'}.`);
-                          setTimeout(() => setToastMessage(null), 5000);
-                        }}
-                        className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm cursor-pointer"
-                      >
-                        Assign to Patient
-                      </button>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => setSelectedGame(game)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 font-bold text-xs shadow-sm flex items-center space-x-1.5 cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Play 3D</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setToastMessage(`Assigned ${game.title} to ${selectedPatient?.name || 'Asha Sharma'}.`);
+                            setTimeout(() => setToastMessage(null), 5000);
+                          }}
+                          className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm cursor-pointer"
+                        >
+                          Assign to Patient
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -2114,6 +2135,27 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
               </button>
             </div>
 
+            {/* Caseload Patient Selector Tabs (Completely Separated Conversation Threads) */}
+            <div className="px-4 py-2 bg-slate-100 border-b border-slate-200 flex items-center space-x-2 overflow-x-auto scrollbar-none">
+              <span className="text-[10px] font-mono font-bold text-slate-500 uppercase shrink-0">Patient Thread:</span>
+              {patients.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    setSelectedPatientId(p.id);
+                    handleOpenChat(p);
+                  }}
+                  className={`px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                    selectedPatient.id === p.id
+                      ? 'bg-blue-600 text-white shadow-sm font-bold'
+                      : 'bg-white hover:bg-slate-200 text-slate-700 border border-slate-200'
+                  }`}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+
             {/* Quick Clinical Guidance Templates */}
             <div className="px-4 py-2.5 bg-blue-50/70 border-b border-blue-100 flex items-center gap-2 overflow-x-auto text-[11px] scrollbar-none">
               <span className="text-[10px] text-blue-800 font-mono font-bold shrink-0">Quick Advice:</span>
@@ -2422,6 +2464,15 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           onClose={() => setSelectedMeeting(null)}
           meeting={selectedMeeting}
           currentUser={currentUser}
+        />
+      )}
+
+      {/* Playable 3D Sports Engine Modal */}
+      {selectedGame && (
+        <PlayableGameModal
+          game={selectedGame}
+          isOpen={true}
+          onClose={() => setSelectedGame(null)}
         />
       )}
 

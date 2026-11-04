@@ -164,6 +164,7 @@ let CLINICAL_MESSAGES = [
     sender_id: 'u_therapist_1',
     sender_name: 'Dr. Rajesh Kulkarni, PT',
     receiver_id: 'u_patient_1',
+    patient_id: 'pt_1',
     message_text: 'Good morning Asha. Please focus on slow, controlled finger release during Squeeze & Fill.',
     translated_text: 'सुप्रभात आशा। कृपया निचोड़ें और भरें के दौरान धीमी, नियंत्रित उंगली छोड़ने पर ध्यान दें।',
     created_at: new Date(Date.now() - 7200000).toISOString()
@@ -173,9 +174,142 @@ let CLINICAL_MESSAGES = [
     sender_id: 'u_patient_1',
     sender_name: 'Asha Sharma',
     receiver_id: 'u_therapist_1',
+    patient_id: 'pt_1',
     message_text: 'Thank you doctor, I felt much less fatigue in my fingers today.',
     translated_text: 'धन्यवाद डॉक्टर, आज मुझे अपनी उंगलियों में बहुत कम थकान महसूस हुई।',
     created_at: new Date(Date.now() - 3600000).toISOString()
+  },
+  {
+    id: 'msg_3',
+    sender_id: 'u_therapist_1',
+    sender_name: 'Dr. Rajesh Kulkarni, PT',
+    receiver_id: 'u_patient_2',
+    patient_id: 'pt_2',
+    message_text: 'Hello Ravi, please maintain 20 degrees wrist elevation during keyboard rest intervals.',
+    translated_text: 'Hello Ravi, please maintain 20 degrees wrist elevation during keyboard rest intervals.',
+    created_at: new Date(Date.now() - 5400000).toISOString()
+  },
+  {
+    id: 'msg_4',
+    sender_id: 'u_patient_2',
+    sender_name: 'Ravi Patel',
+    receiver_id: 'u_therapist_1',
+    patient_id: 'pt_2',
+    message_text: 'Understood Dr. Rajesh, doing the tendon gliding stretches twice daily.',
+    translated_text: 'Understood Dr. Rajesh, doing the tendon gliding stretches twice daily.',
+    created_at: new Date(Date.now() - 1800000).toISOString()
+  },
+  {
+    id: 'msg_5',
+    sender_id: 'u_therapist_1',
+    sender_name: 'Dr. Rajesh Kulkarni, PT',
+    receiver_id: 'u_patient_3',
+    patient_id: 'pt_3',
+    message_text: 'Namaste Meena, excellent progress on wrist pronation. Keep working towards 90 degrees.',
+    translated_text: 'ನಮಸ್ಕಾರ ಮೀನಾ, ಮಣಿಕಟ್ಟಿನ ಪ್ರೊನೇಶನ್‌ನಲ್ಲಿ ಉತ್ತಮ ಪ್ರಗತಿ. 90 ಡಿಗ್ರಿಗಳನ್ನು ಸಾಧಿಸಲು ಮುಂದುವರಿಯಿರಿ.',
+    created_at: new Date(Date.now() - 8400000).toISOString()
+  }
+];
+
+const ALL_REHAB_GAMES = [
+  {
+    id: 'gm_badminton',
+    title: 'Badminton Overhead Rally',
+    category: 'Sports Simulation',
+    difficulty: 'Moderate',
+    target_motors: 'Shoulder Abduction & Grip',
+    description: 'Overhead racquet reaching and shuttlecock returns designed for upper-limb motor coordination and shoulder abduction.',
+    target: '10 Rallies',
+    reps: 10,
+    tags: ['Sports Simulation', 'Upper Limb', 'Range & Speed']
+  },
+  {
+    id: 'gm_cricket',
+    title: 'Cricket Batting Timing',
+    category: 'Sports Simulation',
+    difficulty: 'Moderate',
+    target_motors: 'Elbow & Forearm Timing',
+    description: 'Forward drive stroke timing with 3D willow bat for elbow extension and dynamic balance.',
+    target: '12 Balls',
+    reps: 12,
+    tags: ['Sports Simulation', 'Upper Limb', 'Reflex & Precision']
+  },
+  {
+    id: 'gm_basketball',
+    title: 'Basketball Free Throw',
+    category: 'Sports Simulation',
+    difficulty: 'Hard',
+    target_motors: 'Bilateral Shoulder Extension',
+    description: 'Parabolic shooting trajectory simulation training upper-extremity extension and release accuracy.',
+    target: '8 Baskets',
+    reps: 8,
+    tags: ['Sports Simulation', 'Upper Limb']
+  },
+  {
+    id: 'gm_table_tennis',
+    title: 'Table Tennis Precision',
+    category: 'Sports Simulation',
+    difficulty: 'Easy',
+    target_motors: 'Wrist Pronation & Reflex',
+    description: 'High-frequency paddle volleys targeting rapid pronation, supination, and reactive timing.',
+    target: '10 Points',
+    reps: 10,
+    tags: ['Sports Simulation', 'Reflex & Precision']
+  },
+  {
+    id: 'gm_bowling',
+    title: 'Bowling Strike Aim',
+    category: 'Sports Simulation',
+    difficulty: 'Moderate',
+    target_motors: 'Trunk & Arm Swing Pendulum',
+    description: 'Pendulum arm swing mechanics targeting shoulder stabilization and release timing.',
+    target: '30 Pins',
+    reps: 30,
+    tags: ['Sports Simulation', 'Full Body']
+  },
+  {
+    id: 'gm_balloon_pop',
+    title: 'Balloon Pop Warm-up',
+    category: 'Range & Speed',
+    difficulty: 'Easy',
+    target_motors: 'Multi-Quadrant Shoulder Reach',
+    description: 'Ascending colorful balloons testing multi-quadrant reaching, target tracking, and active pop timing.',
+    target: '15 Balloons',
+    reps: 15,
+    tags: ['Range & Speed', 'Upper Limb']
+  },
+  {
+    id: 'gm_fruit_reach',
+    title: 'Fruit Harvest Reach',
+    category: 'Range & Speed',
+    difficulty: 'Moderate',
+    target_motors: 'Upper Limb Elevation',
+    description: 'Virtual orchard fruit picking requiring elevation, extension, and grasp timing.',
+    target: '10 Fruits',
+    reps: 10,
+    tags: ['Range & Speed', 'Upper Limb']
+  },
+  {
+    id: 'gm_squeeze',
+    title: 'Sponge Squeeze 3D',
+    category: 'Fine Motor & Pinch Grip',
+    difficulty: 'Moderate',
+    target_motors: 'Finger Flexion & Grasp',
+    description: 'Virtual hydrologic sponge compression tracking active finger closure, grasp strength, and peak isometric hold.',
+    target: '15 Squeezes',
+    reps: 15,
+    tags: ['Upper Limb', 'Fine Motor & Pinch Grip']
+  },
+  {
+    id: 'gm_reacher',
+    title: 'Star Reacher 3D',
+    category: 'Spatial Upper-Limb Coordination',
+    difficulty: 'Moderate',
+    target_motors: 'Shoulder Abduction & Coordination',
+    description: 'Floating stellar constellations requiring multi-directional shoulder abduction and elbow extension.',
+    target: '20 Stars',
+    reps: 20,
+    tags: ['Upper Limb', 'Range & Speed']
   }
 ];
 
@@ -430,7 +564,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ meetings: CLINICAL_MEETINGS });
   }
 
-  // 4c. Real-Time Patient & Clinician Messages
+  // 4c. Real-Time Patient & Clinician Messages (Strictly Per-Patient Isolated)
   if (pathname === '/messages' || pathname.startsWith('/messages')) {
     if (req.method === 'POST') {
       const {
@@ -445,17 +579,32 @@ export default async function handler(req, res) {
       const sender_id = customSenderId || (isDoctor ? 'u_therapist_1' : 'u_patient_1');
       const sender_name = customSenderName || (sender_id === 'u_therapist_1' ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma');
 
+      // Determine the isolated patient thread this message belongs to
+      const patient_id = body.patient_id ||
+        (receiver_id.startsWith('u_patient') || receiver_id.startsWith('pt_')
+          ? (PATIENTS.find(p => p.id === receiver_id || p.user_id === receiver_id)?.id || 'pt_1')
+          : (sender_id.startsWith('u_patient') || sender_id.startsWith('pt_')
+            ? (PATIENTS.find(p => p.id === sender_id || p.user_id === sender_id)?.id || 'pt_1')
+            : 'pt_1'));
+
       // Server deduplication: check if exact message was received within 5 seconds
       const existing = CLINICAL_MESSAGES.find(
         m => (body.id && m.id === body.id) ||
              (m.sender_id === sender_id && m.message_text === message_text && (Date.now() - new Date(m.created_at).getTime() < 5000))
       );
+
+      const patientThread = CLINICAL_MESSAGES.filter(
+        m => m.patient_id === patient_id ||
+             (patient_id === 'pt_1' && (!m.patient_id || m.receiver_id === 'u_patient_1' || m.sender_id === 'u_patient_1'))
+      );
+
       if (existing) {
-        return res.status(200).json({ success: true, message: existing, messages: CLINICAL_MESSAGES });
+        return res.status(200).json({ success: true, message: existing, messages: patientThread });
       }
 
       const newMsg = {
         id: body.id || ('msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6)),
+        patient_id,
         sender_id,
         sender_name,
         receiver_id,
@@ -464,10 +613,39 @@ export default async function handler(req, res) {
         created_at: body.created_at || new Date().toISOString()
       };
       CLINICAL_MESSAGES.push(newMsg);
-      if (CLINICAL_MESSAGES.length > 300) CLINICAL_MESSAGES.shift();
-      return res.status(200).json({ success: true, message: newMsg, messages: CLINICAL_MESSAGES });
+      if (CLINICAL_MESSAGES.length > 500) CLINICAL_MESSAGES.shift();
+
+      const updatedThread = CLINICAL_MESSAGES.filter(
+        m => m.patient_id === patient_id ||
+             (patient_id === 'pt_1' && (!m.patient_id || m.receiver_id === 'u_patient_1' || m.sender_id === 'u_patient_1'))
+      );
+      return res.status(200).json({ success: true, message: newMsg, messages: updatedThread });
     }
-    return res.status(200).json({ messages: CLINICAL_MESSAGES });
+
+    // GET /messages or GET /messages/:patient_or_user_id (Separate thread per patient)
+    const pathTarget = pathname.replace('/messages/', '').replace('/messages', '').trim();
+    const queryPt = url.searchParams.get('patient_id') || url.searchParams.get('receiver_id') || url.searchParams.get('userId') || pathTarget;
+    let filteredMessages = CLINICAL_MESSAGES;
+    if (queryPt) {
+      const targetPatient = PATIENTS.find(p => p.id === queryPt || p.user_id === queryPt) || { id: queryPt, user_id: queryPt };
+      filteredMessages = CLINICAL_MESSAGES.filter(
+        m => m.patient_id === targetPatient.id ||
+             m.receiver_id === targetPatient.user_id ||
+             m.sender_id === targetPatient.user_id ||
+             (targetPatient.id === 'pt_1' && (!m.patient_id || m.receiver_id === 'u_patient_1' || m.sender_id === 'u_patient_1'))
+      );
+    }
+    return res.status(200).json({ messages: filteredMessages });
+  }
+
+  // 4d. Rehabilitation Games Catalog (Full 3D WebGL Games)
+  if (pathname === '/games' || pathname.startsWith('/games')) {
+    const gId = pathname.replace('/games/', '').replace('/games', '').trim();
+    if (gId) {
+      const found = ALL_REHAB_GAMES.find(g => g.id === gId || g.id === ('gm_' + gId) || g.id.includes(gId));
+      if (found) return res.status(200).json({ success: true, game: found });
+    }
+    return res.status(200).json({ success: true, games: ALL_REHAB_GAMES });
   }
 
   // WebRTC Multi-Tier Signaling Bridge
@@ -491,7 +669,7 @@ export default async function handler(req, res) {
     const targetRoomId = url.searchParams.get('roomId') || 'remotion-room-pt_1';
     const excludeSender = url.searchParams.get('excludeSender') || '';
     const since = parseInt(url.searchParams.get('since') || '0', 10);
-    const windowStart = since > 0 ? Math.min(since, Date.now() - 25000) : (Date.now() - 25000);
+    const windowStart = since > 0 ? Math.max(since, Date.now() - 30000) : (Date.now() - 30000);
     const matched = WEBRTC_SIGNALS.filter(
       s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp >= windowStart
     );

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Video, VideoOff, Mic, MicOff, PhoneOff, Globe, Subtitles,
-  Users, Clock, Sparkles, MessageSquare, Send, X, Layout, Maximize2
+  Users, Clock, Sparkles, MessageSquare, Send, X, Layout, Maximize2,
+  Volume2, VolumeX, AlertCircle
 } from 'lucide-react';
 import { api } from '../services/api';
+import { soundFX } from '../services/audio';
 
 const ICE_SERVERS = {
   iceServers: [
@@ -21,6 +23,9 @@ export default function VideoMeetingModal({
 }) {
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
+  const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
+  const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [callDuration, setCallDuration] = useState(0);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState('en');
@@ -51,6 +56,8 @@ export default function VideoMeetingModal({
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);
+  const inCallEndRef = useRef(null);
   const localStreamRef = useRef(null);
   const remoteFallbackStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
@@ -427,6 +434,19 @@ export default function VideoMeetingModal({
     }
   };
 
+  // Natural Audible Speech Synthesizer (TTS fallback ensures voice always works)
+  const speakIncomingText = (text, speakerName) => {
+    if (!window.speechSynthesis || isSpeakerMuted) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = (speakerName && speakerName.includes('Rajesh')) ? 0.95 : 1.1;
+      utterance.lang = selectedLanguage === 'hi' ? 'hi-IN' : 'en-US';
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {}
+  };
+
   // Incoming Answer Handler
   const handleAnswer = async (answer) => {
     const pc = peerConnectionRef.current;
@@ -486,12 +506,7 @@ export default function VideoMeetingModal({
         remoteFallbackStreamRef.current = fallback;
         remoteVideoRef.current.srcObject = fallback;
         remoteVideoRef.current.playsInline = true;
-        remoteVideoRef.current.play().catch(() => {
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.muted = true;
-            remoteVideoRef.current.play().catch(() => {});
-          }
-        });
+        remoteVideoRef.current.play().catch(() => {});
       }
 
       // Exactly one peer creates the initial WebRTC offer to eliminate glare
@@ -515,9 +530,17 @@ export default function VideoMeetingModal({
     } else if (data.type === 'candidate') {
       await handleCandidate(data.candidate);
     } else if (data.type === 'caption' && data.caption) {
-      setCaptions(prev => [...prev.slice(-4), data.caption]);
+      setCaptions(prev => [...prev.slice(-3), data.caption]);
+      if (data.caption.text && data.caption.speaker !== myName) {
+        speakIncomingText(data.caption.text, data.caption.speaker);
+      }
     } else if (data.type === 'in_call_chat' && data.message) {
       setInCallMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
+      if (data.message.sender !== myName) {
+        soundFX.playClick();
+        if (!showInCallChat) setUnreadChatCount(prev => prev + 1);
+        speakIncomingText(data.message.text, data.message.sender);
+      }
     } else if (data.type === 'leave') {
       setHasRemotePeer(false);
       setConnectionStatus('Peer left the consultation room.');
@@ -539,11 +562,38 @@ export default function VideoMeetingModal({
           });
         }
       } catch (camErr) {
-        console.warn('Physical camera unavailable or locked by other tab, engaging high-fidelity medical stream:', camErr);
+        console.warn('Physical camera/mic in use or unavailable, engaging high-fidelity medical stream:', camErr);
+        // Attempt audio only if video failed
+        try {
+          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
+          if (audioOnly && audioOnly.getAudioTracks().length > 0) {
+            const canvasStream = createLifelikeVideoFeed(myRole, myName, animFrameRef);
+            stream = new MediaStream([canvasStream.getVideoTracks()[0], audioOnly.getAudioTracks()[0]]);
+          }
+        } catch (aErr) {}
       }
 
       if (!stream) {
         stream = createLifelikeVideoFeed(myRole, myName, animFrameRef);
+      }
+
+      // Ensure active audio track exists for WebRTC pipe
+      if (stream && stream.getAudioTracks().length === 0) {
+        try {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) {
+            const actx = new AudioContext();
+            const osc = actx.createOscillator();
+            const gain = actx.createGain();
+            gain.gain.value = 0.0001; // carrier tone keeps audio channel alive
+            osc.connect(gain);
+            const dest = actx.createMediaStreamDestination();
+            gain.connect(dest);
+            osc.start();
+            const synthTrack = dest.stream.getAudioTracks()[0];
+            if (synthTrack) stream.addTrack(synthTrack);
+          }
+        } catch (e) {}
       }
 
       localStreamRef.current = stream;
@@ -565,12 +615,7 @@ export default function VideoMeetingModal({
         remoteFallbackStreamRef.current = initialRemoteFeed;
         remoteVideoRef.current.srcObject = initialRemoteFeed;
         remoteVideoRef.current.playsInline = true;
-        remoteVideoRef.current.play().catch(() => {
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.muted = true;
-            remoteVideoRef.current.play().catch(() => {});
-          }
-        });
+        remoteVideoRef.current.play().catch(() => {});
       }
 
       // 2. Setup RTCPeerConnection
@@ -582,26 +627,27 @@ export default function VideoMeetingModal({
       }
 
       pc.ontrack = (event) => {
-        console.log('[WebRTC] Received remote track:', event);
+        console.log('[WebRTC] Received remote track:', event.track.kind);
+        const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+        
         if (remoteVideoRef.current) {
-          if (event.streams && event.streams[0]) {
-            remoteVideoRef.current.srcObject = event.streams[0];
-          } else {
-            if (!remoteVideoRef.current.srcObject) {
-              remoteVideoRef.current.srcObject = new MediaStream();
-            }
-            remoteVideoRef.current.srcObject.addTrack(event.track);
-          }
+          remoteVideoRef.current.srcObject = remoteStream;
           remoteVideoRef.current.playsInline = true;
-          remoteVideoRef.current.play().catch(() => {
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.muted = true;
-              remoteVideoRef.current.play().catch(() => {});
-            }
-          });
-          setHasRemotePeer(true);
-          setConnectionStatus('Direct Live Video Connected');
+          remoteVideoRef.current.play().catch(() => {});
         }
+
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = remoteStream;
+          remoteAudioRef.current.muted = false;
+          remoteAudioRef.current.play().then(() => {
+            setIsAudioPlaybackBlocked(false);
+          }).catch(err => {
+            console.warn('Remote audio autoplay waiting for click:', err);
+            setIsAudioPlaybackBlocked(true);
+          });
+        }
+        setHasRemotePeer(true);
+        setConnectionStatus('Direct Live Video & Audio Connected');
       };
 
       pc.onicecandidate = (event) => {
@@ -773,11 +819,14 @@ export default function VideoMeetingModal({
     };
   }, [isOpen, roomId]);
 
-  // Speech Recognition Subtitles Engine
+  // Continuous Speech Recognition Subtitles Engine
   const startSpeechSubtitles = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       try {
+        if (recognitionRef.current) {
+          try { recognitionRef.current.stop(); } catch (e) {}
+        }
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
@@ -786,7 +835,7 @@ export default function VideoMeetingModal({
                            selectedLanguage === 'ta' ? 'ta-IN' :
                            selectedLanguage === 'te' ? 'te-IN' : 'en-US';
 
-        recognition.onresult = async (event) => {
+        recognition.onresult = (event) => {
           let transcript = '';
           for (let i = event.resultIndex; i < event.results.length; ++i) {
             transcript += event.results[i][0].transcript;
@@ -794,26 +843,57 @@ export default function VideoMeetingModal({
           setLiveTranscript(transcript);
 
           if (event.results[event.results.length - 1].isFinal) {
-            const newCap = {
-              speaker: myName,
-              text: transcript,
-              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            };
+            const cleanText = transcript.trim();
+            if (cleanText) {
+              const newCap = {
+                speaker: myName,
+                text: cleanText,
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              };
 
-            setCaptions(prev => [...prev.slice(-3), newCap]);
-            setLiveTranscript('');
-            postSignal('caption', { caption: newCap });
+              setCaptions(prev => [...prev.slice(-3), newCap]);
+              setLiveTranscript('');
+              postSignal('caption', { caption: newCap });
+            }
           }
         };
 
-        recognition.onerror = () => {};
+        recognition.onerror = (e) => {
+          if (e.error === 'no-speech') return; // Expected when silent
+          console.warn('Speech recognition status:', e.error);
+        };
+
+        // Continuous Loop: Auto-restart recognition when voice pauses
+        recognition.onend = () => {
+          if (recognitionRef.current && captionsEnabled && isOpen) {
+            try { recognition.start(); } catch (e) {}
+          }
+        };
+
         recognition.start();
         recognitionRef.current = recognition;
       } catch (err) {
-        console.warn('Speech recognition warning:', err);
+        console.warn('Speech recognition activation warning:', err);
       }
     }
   };
+
+  // Re-engage speech recognition on language or toggle change
+  useEffect(() => {
+    if (isOpen && captionsEnabled) {
+      startSpeechSubtitles();
+    } else if (!captionsEnabled && recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) {}
+    }
+  }, [selectedLanguage, captionsEnabled, isOpen]);
+
+  // Auto-scroll in-call chat on new messages
+  useEffect(() => {
+    if (showInCallChat) {
+      setUnreadChatCount(0);
+      inCallEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [inCallMessages, showInCallChat]);
 
   const teardownMeeting = () => {
     postSignal('leave');
@@ -943,26 +1023,68 @@ export default function VideoMeetingModal({
             </div>
 
             <button
+              onClick={() => setIsSpeakerMuted(!isSpeakerMuted)}
+              className={`p-2 rounded-xl border text-xs transition-all cursor-pointer ${
+                isSpeakerMuted ? 'bg-amber-950 text-amber-300 border-amber-600/50' : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-white'
+              }`}
+              title={isSpeakerMuted ? 'Unmute consultation voice output' : 'Mute consultation voice output'}
+            >
+              {isSpeakerMuted ? <VolumeX className="w-4 h-4 text-amber-400" /> : <Volume2 className="w-4 h-4 text-cyan-400" />}
+            </button>
+
+            <button
               onClick={() => setCaptionsEnabled(!captionsEnabled)}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
-                captionsEnabled ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50' : 'bg-slate-900 text-slate-400 border-slate-800'
+                captionsEnabled ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800'
               }`}
+              title={captionsEnabled ? 'Disable live closed captions' : 'Enable live closed captions'}
             >
               <Subtitles className="w-4 h-4" />
               <span className="hidden sm:inline">Subtitles</span>
             </button>
 
             <button
-              onClick={() => setShowInCallChat(!showInCallChat)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
+              onClick={() => {
+                setShowInCallChat(!showInCallChat);
+                if (!showInCallChat) setUnreadChatCount(0);
+              }}
+              className={`relative flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer ${
                 showInCallChat ? 'bg-blue-950 text-blue-300 border-blue-500/50 font-bold' : 'bg-slate-900 text-slate-400 border-slate-800'
               }`}
             >
               <MessageSquare className="w-4 h-4" />
               <span className="hidden sm:inline">In-Call Chat</span>
+              {unreadChatCount > 0 && !showInCallChat && (
+                <span className="ml-1 px-1.5 py-0.5 rounded-full bg-cyan-500 text-slate-950 text-[10px] font-bold font-mono animate-bounce">
+                  {unreadChatCount}
+                </span>
+              )}
             </button>
           </div>
         </div>
+
+        {/* Hidden Remote Audio Element for Direct P2P Voice Output */}
+        <audio ref={remoteAudioRef} autoPlay playsInline />
+
+        {/* Audio Unmute Alert Banner (if browser autoplay policy paused sound) */}
+        {isAudioPlaybackBlocked && (
+          <div
+            onClick={() => {
+              if (remoteAudioRef.current) {
+                remoteAudioRef.current.muted = false;
+                remoteAudioRef.current.play().then(() => setIsAudioPlaybackBlocked(false)).catch(() => {});
+              }
+              if (remoteVideoRef.current) {
+                remoteVideoRef.current.muted = false;
+                remoteVideoRef.current.play().catch(() => {});
+              }
+            }}
+            className="px-4 py-2 bg-gradient-to-r from-amber-600 to-rose-600 text-slate-950 text-xs font-bold flex items-center justify-center space-x-2 cursor-pointer shadow-lg animate-pulse"
+          >
+            <Volume2 className="w-4 h-4" />
+            <span>Consultation voice audio paused by browser. Tap anywhere or click here to unmute sound!</span>
+          </div>
+        )}
 
         {/* Video Screen Layout (WhatsApp Mobile PiP by Default, or Split Screen) */}
         <div className="flex-1 p-3 sm:p-4 bg-slate-950/70 relative overflow-hidden flex flex-col justify-center">
@@ -1090,6 +1212,30 @@ export default function VideoMeetingModal({
                 </button>
               </div>
 
+              {/* Quick Reply Chips */}
+              <div className="py-2 border-b border-slate-800 flex items-center space-x-1.5 overflow-x-auto scrollbar-none text-[10px]">
+                {['Can you hear me?', 'Loud and clear!', 'Starting routine now', 'Understood doctor'].map(chip => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => {
+                      const newMsg = {
+                        id: 'icm_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5),
+                        sender: myName,
+                        role: myRole,
+                        text: chip,
+                        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      };
+                      setInCallMessages(prev => [...prev, newMsg]);
+                      postSignal('in_call_chat', { message: newMsg });
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-cyan-950 text-slate-300 hover:text-cyan-300 border border-slate-800 hover:border-cyan-700 whitespace-nowrap cursor-pointer transition-colors"
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex-1 overflow-y-auto py-3 space-y-2 text-xs">
                 {inCallMessages.map((msg) => (
                   <div
@@ -1111,6 +1257,7 @@ export default function VideoMeetingModal({
                     <div>{msg.text}</div>
                   </div>
                 ))}
+                <div ref={inCallEndRef} />
               </div>
 
               <form onSubmit={handleSendInCallMessage} className="pt-2 border-t border-slate-800 flex items-center space-x-1.5">

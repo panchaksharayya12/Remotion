@@ -14,13 +14,115 @@ import DeviceManager from '../components/DeviceManager';
 import CameraSetup from '../components/CameraSetup';
 import { webxrService } from '../services/webxr';
 
+const DEFAULT_GAMES = [
+  {
+    id: 'gm_badminton',
+    title: 'Badminton Overhead Rally',
+    category: 'Sports Simulation',
+    difficulty: 'Moderate',
+    target_motors: 'Shoulder & Grip',
+    description: 'Overhead racquet reaching and shuttlecock returns designed for upper-limb motor coordination and shoulder abduction.',
+    target: '10 Rallies',
+    reps: 10,
+    tags: ['Sports Simulation', 'Upper Limb', 'Range & Speed']
+  },
+  {
+    id: 'gm_cricket',
+    title: 'Cricket Batting Timing',
+    category: 'Sports Simulation',
+    difficulty: 'Moderate',
+    target_motors: 'Elbow & Forearm',
+    description: 'Forward drive stroke timing with 3D willow bat for elbow extension and dynamic balance.',
+    target: '12 Balls',
+    reps: 12,
+    tags: ['Sports Simulation', 'Upper Limb', 'Reflex & Precision']
+  },
+  {
+    id: 'gm_basketball',
+    title: 'Basketball Free Throw',
+    category: 'Sports Simulation',
+    difficulty: 'Hard',
+    target_motors: 'Bilateral Shoulder',
+    description: 'Parabolic shooting trajectory simulation training upper-extremity extension and release accuracy.',
+    target: '8 Baskets',
+    reps: 8,
+    tags: ['Sports Simulation', 'Upper Limb']
+  },
+  {
+    id: 'gm_table_tennis',
+    title: 'Table Tennis Precision',
+    category: 'Sports Simulation',
+    difficulty: 'Easy',
+    target_motors: 'Wrist & Reflex',
+    description: 'High-frequency paddle volleys targeting rapid pronation, supination, and reactive timing.',
+    target: '10 Points',
+    reps: 10,
+    tags: ['Sports Simulation', 'Reflex & Precision']
+  },
+  {
+    id: 'gm_bowling',
+    title: 'Bowling Strike Aim',
+    category: 'Sports Simulation',
+    difficulty: 'Moderate',
+    target_motors: 'Trunk & Arm Swing',
+    description: 'Pendulum arm swing mechanics targeting shoulder stabilization and release timing.',
+    target: '30 Pins',
+    reps: 30,
+    tags: ['Sports Simulation', 'Full Body']
+  },
+  {
+    id: 'gm_balloon_pop',
+    title: 'Balloon Pop Warm-up',
+    category: 'Range & Speed',
+    difficulty: 'Easy',
+    target_motors: 'Shoulder Elevation',
+    description: 'Ascending colorful balloons testing multi-quadrant reaching, target tracking, and active pop timing.',
+    target: '15 Balloons',
+    reps: 15,
+    tags: ['Range & Speed', 'Upper Limb']
+  },
+  {
+    id: 'gm_fruit_reach',
+    title: 'Fruit Harvest Reach',
+    category: 'Range & Speed',
+    difficulty: 'Moderate',
+    target_motors: 'Multi-directional Reach',
+    description: 'Virtual orchard fruit picking requiring elevation, extension, and grasp timing.',
+    target: '10 Fruits',
+    reps: 10,
+    tags: ['Range & Speed', 'Upper Limb']
+  },
+  {
+    id: 'gm_squeeze',
+    title: 'Sponge Squeeze 3D',
+    category: 'Fine Motor & Pinch Grip',
+    difficulty: 'Moderate',
+    target_motors: 'Finger Flexion & Grasp',
+    description: 'Virtual hydrologic sponge compression tracking active finger closure, grasp strength, and peak isometric hold.',
+    target: '15 Squeezes',
+    reps: 15,
+    tags: ['Upper Limb', 'Fine Motor & Pinch Grip']
+  },
+  {
+    id: 'gm_reacher',
+    title: 'Star Reacher 3D',
+    category: 'Spatial Upper-Limb Coordination',
+    difficulty: 'Moderate',
+    target_motors: 'Shoulder Abduction',
+    description: 'Floating stellar constellations requiring multi-directional shoulder abduction and elbow extension.',
+    target: '20 Stars',
+    reps: 20,
+    tags: ['Upper Limb', 'Range & Speed']
+  }
+];
+
 export default function GamingPortal({ onOpenHeadsetModal }) {
   const [activeTab, setActiveTab] = useState('explore'); // explore, games, headset, connect, sessions, scores, settings
-  const [games, setGames] = useState([]);
+  const [games, setGames] = useState(DEFAULT_GAMES);
   const [selectedGame, setSelectedGame] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [xrStatus, setXrStatus] = useState(webxrService.getStatus());
   const [recentSessions, setRecentSessions] = useState([
     { id: 's1', game: 'Badminton', date: 'Today, 10:15 AM', score: 8, duration: '2m 45s', accuracy: 92, reps: 10, mode: 'Hand Tracking' },
@@ -39,13 +141,12 @@ export default function GamingPortal({ onOpenHeadsetModal }) {
   useEffect(() => {
     const fetchGames = async () => {
       try {
-        setLoading(true);
         const res = await api.getGames();
-        setGames(res.games || []);
-        setLoading(false);
+        if (res?.games && res.games.length > 0) {
+          setGames(res.games);
+        }
       } catch (err) {
-        console.error('Failed to load games:', err);
-        setLoading(false);
+        console.warn('API getGames using fallback catalog:', err);
       }
     };
     fetchGames();

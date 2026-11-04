@@ -256,6 +256,21 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     }
   }, [chatMessages, activeTab]);
 
+  // Current Patient Identity
+  const myPatientId = currentUser?.profile?.id || dashboardData?.patient?.id || 'pt_1';
+  const myUserId = currentUser?.id || dashboardData?.patient?.user_id || 'u_patient_1';
+  const myName = currentUser?.name || dashboardData?.patient?.name || 'Asha Sharma';
+
+  // Helper to ensure messages strictly belong to this patient
+  const doesMessageMatchMe = (msg) => {
+    if (!msg) return false;
+    if (msg.patient_id && (msg.patient_id === myPatientId || msg.patient_id === myUserId)) return true;
+    if (msg.receiver_id && (msg.receiver_id === myUserId || msg.receiver_id === myPatientId)) return true;
+    if (msg.sender_id && (msg.sender_id === myUserId || msg.sender_id === myPatientId)) return true;
+    if (myPatientId === 'pt_1' && (!msg.patient_id || msg.receiver_id === 'u_patient_1' || msg.sender_id === 'u_patient_1')) return true;
+    return false;
+  };
+
   // Send message to therapist (0ms instant optimistic dispatch + multi-tier cloud sync)
   const handleSendChatMessage = async (textOverride = null) => {
     const text = (textOverride || chatInput).trim();
@@ -265,8 +280,9 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     const tempId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
     const sentMsg = {
       id: tempId,
-      sender_id: 'u_patient_1',
-      sender_name: 'Asha Sharma',
+      patient_id: myPatientId,
+      sender_id: myUserId,
+      sender_name: myName,
       receiver_id: therapistId,
       message_text: text,
       translated_text: text,
@@ -309,12 +325,13 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       }).catch(() => {});
     } catch (e) {}
 
-    // 5. Persist to API with id passed to prevent duplicate insertion
+    // 5. Persist to API with id and patient_id passed to prevent duplicate insertion & preserve thread
     try {
       await api.sendMessage(therapistId, text, 'en', {
         id: tempId,
-        sender_id: 'u_patient_1',
-        sender_name: 'Asha Sharma'
+        patient_id: myPatientId,
+        sender_id: myUserId,
+        sender_name: myName
       });
     } catch (err) {
       console.warn('API send chat note:', err);
@@ -453,7 +470,9 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         });
         setTimeout(() => setRealtimeNotice(null), 7000);
       } else if (data.type === 'CHAT_MESSAGE' && data.message) {
-        setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
+        if (doesMessageMatchMe(data.message)) {
+          setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
+        }
       }
     };
 
@@ -496,7 +515,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       } else if (e.key === 'remotion_chat_sync_signal' && e.newValue) {
         try {
           const data = JSON.parse(e.newValue);
-          if (data.type === 'CHAT_MESSAGE' && data.message) {
+          if (data.type === 'CHAT_MESSAGE' && data.message && doesMessageMatchMe(data.message)) {
             setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
           }
         } catch (err) {}
@@ -510,7 +529,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         const raw = localStorage.getItem('remotion_chat_sync_signal');
         if (raw) {
           const data = JSON.parse(raw);
-          if (data.type === 'CHAT_MESSAGE' && data.message) {
+          if (data.type === 'CHAT_MESSAGE' && data.message && doesMessageMatchMe(data.message)) {
             setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
           }
         }
@@ -571,7 +590,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
           const raw = JSON.parse(event.data);
           if (raw.event === 'message' && raw.message) {
             const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
-            if (data.type === 'CHAT_MESSAGE' && data.message) {
+            if (data.type === 'CHAT_MESSAGE' && data.message && doesMessageMatchMe(data.message)) {
               setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
             }
           }
@@ -591,7 +610,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             const raw = JSON.parse(line);
             if (raw.event === 'message' && raw.message) {
               const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
-              if (data.type === 'CHAT_MESSAGE' && data.message) {
+              if (data.type === 'CHAT_MESSAGE' && data.message && doesMessageMatchMe(data.message)) {
                 setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
               }
             }
@@ -652,10 +671,10 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       } catch (err) {}
     }, 800);
 
-    // 6. Continuous fast API Chat Message polling (every 800ms)
+    // 6. Continuous fast API Chat Message polling (every 800ms strictly for this patient)
     const apiChatPoll = setInterval(async () => {
       try {
-        const res = await api.getMessages('u_therapist_1');
+        const res = await api.getMessages(myPatientId);
         if (res?.messages && res.messages.length > 0) {
           setChatMessages(prev => mergeAndDeduplicateMessages(prev, res.messages));
         }
@@ -784,7 +803,13 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
   const assignedGames = [
     { id: 'gm_badminton', title: 'Badminton Overhead Rally', cat: 'Speed & Agility', desc: 'Overhead racquet reaching and shuttlecock returns prescribed for shoulder abduction.', reps: 10 },
     { id: 'gm_cricket', title: 'Cricket Batting Timing', cat: 'Sports Simulation', desc: 'Forward drive stroke timing with English willow bat for elbow extension.', reps: 12 },
-    { id: 'gm_balloon_pop', title: 'Balloon Pop Warm-up', cat: 'Range & Speed', desc: 'Ascending colorful balloons testing multi-quadrant reaching.', reps: 15 }
+    { id: 'gm_basketball', title: 'Basketball Free Throw', cat: 'Sports Simulation', desc: 'Parabolic shooting trajectory training bilateral shoulder extension.', reps: 8 },
+    { id: 'gm_table_tennis', title: 'Table Tennis Precision', cat: 'Reflex & Precision', desc: 'High-frequency paddle volleys targeting rapid pronation and supination.', reps: 10 },
+    { id: 'gm_bowling', title: 'Bowling Strike Aim', cat: 'Sports Simulation', desc: 'Pendulum arm swing mechanics targeting shoulder stabilization.', reps: 30 },
+    { id: 'gm_balloon_pop', title: 'Balloon Pop Warm-up', cat: 'Range & Speed', desc: 'Ascending colorful balloons testing multi-quadrant reaching.', reps: 15 },
+    { id: 'gm_fruit_reach', title: 'Fruit Harvest Reach', cat: 'Range & Speed', desc: 'Virtual orchard fruit picking requiring elevation and grasp timing.', reps: 10 },
+    { id: 'gm_squeeze', title: 'Sponge Squeeze 3D', cat: 'Fine Motor & Grip', desc: 'Virtual hydrologic sponge compression tracking active finger closure and peak isometric hold.', reps: 15 },
+    { id: 'gm_reacher', title: 'Star Reacher 3D', cat: 'Coordination', desc: 'Floating stellar constellations requiring multi-directional shoulder abduction.', reps: 20 }
   ];
 
   // Start Guided Session (Only patient's assigned exercises & games in order)

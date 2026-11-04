@@ -10,9 +10,28 @@ import { soundFX } from '../services/audio';
 import { api } from '../services/api';
 import { webxrService } from '../services/webxr';
 
+// Robust Game ID Normalizer: handles 'gm_badminton', 'game_badminton', 'badminton', and titles
+export const resolveStandardGameId = (gameObj) => {
+  if (!gameObj) return 'gm_badminton';
+  const id = (gameObj.id || '').toLowerCase().trim();
+  const title = (gameObj.title || '').toLowerCase().trim();
+
+  if (id.includes('badminton') || title.includes('badminton')) return 'gm_badminton';
+  if (id.includes('cricket') || title.includes('cricket')) return 'gm_cricket';
+  if (id.includes('basketball') || id.includes('hoop') || title.includes('basketball')) return 'gm_basketball';
+  if (id.includes('table_tennis') || id.includes('ping_pong') || title.includes('table tennis') || title.includes('ping pong')) return 'gm_table_tennis';
+  if (id.includes('bowling') || title.includes('bowling')) return 'gm_bowling';
+  if (id.includes('balloon') || title.includes('balloon')) return 'gm_balloon_pop';
+  if (id.includes('fruit') || title.includes('fruit') || title.includes('harvest')) return 'gm_fruit_reach';
+  if (id.includes('squeeze') || id.includes('sponge') || title.includes('squeeze') || title.includes('sponge')) return 'gm_squeeze';
+  if (id.includes('reacher') || id.includes('star') || title.includes('reacher') || title.includes('star')) return 'gm_reacher';
+  return id.startsWith('gm_') ? id : ('gm_' + id);
+};
+
 export default function PlayableGameModal({ game, isOpen = true, onClose, onGameComplete, onComplete }) {
   if (!isOpen || !game) return null;
 
+  const standardGameId = resolveStandardGameId(game);
   const containerRef = useRef(null);
   const [difficulty, setDifficulty] = useState('Medium'); // Easy, Medium, Hard
   const [gameState, setGameState] = useState('playing'); // 'playing', 'paused', 'completed'
@@ -41,6 +60,10 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
         return { label: 'Balloons Popped', target: 15, unit: 'balloons' };
       case 'gm_fruit_reach':
         return { label: 'Fruits Harvested', target: 10, unit: 'fruits' };
+      case 'gm_squeeze':
+        return { label: 'Sponge Squeezes', target: 15, unit: 'squeezes' };
+      case 'gm_reacher':
+        return { label: 'Stars Captured', target: 20, unit: 'stars' };
       case 'gm_target_shooting':
         return { label: 'Targets Aligned', target: 10, unit: 'targets' };
       case 'gm_tennis':
@@ -50,7 +73,7 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
     }
   };
 
-  const objective = getGameObjective(game.id);
+  const objective = getGameObjective(standardGameId);
 
   // Game Engine Internal State References
   const threeRef = useRef({
@@ -141,7 +164,7 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
     scene.add(blueRim);
 
     // Initialize the specific 3D sports environment
-    const gameId = game.id;
+    const gameId = standardGameId;
     let cleanupGame = null;
 
     if (gameId === 'gm_badminton') {
@@ -197,7 +220,7 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
 
     const handleResize = () => {
       if (!container || !renderer || !camera) return;
-      const nw = container.clientWidth;
+      const nw = container.clientWidth || 920;
       const nh = container.clientHeight || 560;
       camera.aspect = nw / nh;
       camera.updateProjectionMatrix();
@@ -205,8 +228,10 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
     };
 
     window.addEventListener('resize', handleResize);
+    const resizeTimer = setTimeout(handleResize, 80);
 
     return () => {
+      clearTimeout(resizeTimer);
       cancelAnimationFrame(threeRef.current.animId);
       dom.removeEventListener('pointermove', handlePointerMove);
       dom.removeEventListener('pointerdown', handlePointerDown);
@@ -215,7 +240,16 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
       if (cleanupGame) cleanupGame();
       renderer.dispose();
     };
-  }, [game.id, gameState, difficulty]);
+  }, [standardGameId, gameState, difficulty]);
+
+  // Close on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && onClose) onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   // Record completed session
   const finishSession = () => {
@@ -1109,10 +1143,10 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
         </div>
 
         {/* Main 3D Canvas Mount */}
-        <div className="relative flex-1 w-full overflow-hidden">
+        <div className="relative flex-1 w-full overflow-hidden min-h-[460px]">
           <div
             ref={containerRef}
-            className="w-full h-full cursor-crosshair"
+            className="w-full h-full min-h-[460px] cursor-crosshair"
             title="Move mouse or pointer to control equipment. Click to swing/shoot."
           />
 
