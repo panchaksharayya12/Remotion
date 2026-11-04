@@ -324,11 +324,6 @@ export default function SignInPage({ onAuthSuccess, onNavigateRegister }) {
           </p>
         </div>
       </div>
-
-      {/* Permanent Academic Disclaimer */}
-      <div className="mt-8 text-center text-xs text-slate-500 font-mono max-w-md">
-        Prototype - synthetic healthcare data - not a medical device. Built for academic research and motor rehabilitation support.
-      </div>
     </div>
   );
 }

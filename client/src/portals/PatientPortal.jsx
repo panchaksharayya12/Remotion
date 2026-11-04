@@ -100,7 +100,10 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
   const [appointments, setAppointments] = useState(() => {
     try {
       const saved = localStorage.getItem('remotion_all_appointments');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch (e) {}
     return DEFAULT_APPOINTMENTS;
   });
@@ -153,7 +156,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
   const loadAppointments = async () => {
     try {
       const res = await api.getMeetings();
-      if (res?.meetings && res.meetings.length > 0) {
+      if (res?.meetings && Array.isArray(res.meetings) && res.meetings.length > 0) {
         setAppointments(res.meetings);
         try {
           localStorage.setItem('remotion_all_appointments', JSON.stringify(res.meetings));
@@ -811,11 +814,12 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
   const patient = dashboardData?.patient || {};
   const stats = dashboardData?.stats || {};
-  const prescriptions = dashboardData?.prescriptions || [];
-  const recentSessions = dashboardData?.recent_sessions || [];
+  const prescriptions = Array.isArray(dashboardData?.prescriptions) ? dashboardData.prescriptions : [];
+  const recentSessions = Array.isArray(dashboardData?.recent_sessions) ? dashboardData.recent_sessions : [];
   const therapist = dashboardData?.therapist || {};
-  const meetings = dashboardData?.meetings || [];
-  const weeklyAdherence = dashboardData?.weekly_adherence || [];
+  const meetings = Array.isArray(dashboardData?.meetings) ? dashboardData.meetings : [];
+  const weeklyAdherence = Array.isArray(dashboardData?.weekly_adherence) ? dashboardData.weekly_adherence : [];
+  const safeAppointments = Array.isArray(appointments) ? appointments : DEFAULT_APPOINTMENTS;
 
   // Filter only games assigned or prescribed by therapist
   const assignedGames = [
@@ -1524,7 +1528,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             </div>
 
             <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm divide-y divide-slate-100">
-              {appointments.map((appt) => (
+              {safeAppointments.map((appt) => (
                 <div key={appt.id} className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 first:pt-0 last:pb-0">
                   <div className="flex items-start space-x-4">
                     <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-800 flex items-center justify-center font-bold shrink-0">

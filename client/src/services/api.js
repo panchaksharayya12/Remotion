@@ -555,6 +555,69 @@ class ApiService {
       return { success: true, session_id: 'sess_' + Date.now(), xp_gained: 65, new_xp: 545, new_level: 4 };
     }
 
+    if (endpoint.startsWith('/meetings')) {
+      const DEFAULT_MEETINGS = [
+        {
+          id: 'mt_weekly_kinematics',
+          title: 'Weekly Kinematics Evaluation',
+          patient_id: 'pt_1',
+          patient_name: 'Asha Sharma',
+          therapist_name: 'Dr. Rajesh Kulkarni, PT',
+          scheduled_time: 'Today at 04:30 PM',
+          duration_minutes: 30,
+          room_id: 'remotion-room-pt_1',
+          notes: 'Upper-limb ROM evaluation and Squeeze & Fill active flexion check.',
+          status: 'scheduled'
+        },
+        {
+          id: 'mt_post_stroke_followup',
+          title: 'Post-Stroke Functional Reach Review',
+          patient_id: 'pt_1',
+          patient_name: 'Asha Sharma',
+          therapist_name: 'Dr. Rajesh Kulkarni, PT',
+          scheduled_time: 'Tomorrow at 10:30 AM',
+          duration_minutes: 45,
+          room_id: 'remotion-room-pt_1',
+          notes: 'Assess lateral shoulder abduction and virtual target reaching latency.',
+          status: 'scheduled'
+        }
+      ];
+
+      if (options.method === 'POST') {
+        const newAppt = {
+          id: body.id || ('mt_' + Date.now().toString(36)),
+          title: body.title || 'Clinical Video Meeting',
+          patient_id: body.patient_id || 'pt_1',
+          patient_name: body.patient_name || 'Patient',
+          therapist_name: body.therapist_name || 'Dr. Rajesh Kulkarni, PT',
+          scheduled_time: body.scheduled_time || 'Upcoming Session',
+          duration_minutes: Number(body.duration_minutes) || 30,
+          room_id: body.room_id || `remotion-room-${body.patient_id || 'pt_1'}`,
+          notes: body.notes || 'Clinical consultation scheduled.',
+          status: 'scheduled',
+          created_at: new Date().toISOString()
+        };
+
+        try {
+          const stored = JSON.parse(localStorage.getItem('remotion_all_appointments') || '[]');
+          const list = Array.isArray(stored) ? stored : DEFAULT_MEETINGS;
+          list.unshift(newAppt);
+          localStorage.setItem('remotion_all_appointments', JSON.stringify(list));
+          return { success: true, meeting: newAppt, meetings: list };
+        } catch (e) {
+          return { success: true, meeting: newAppt, meetings: [newAppt, ...DEFAULT_MEETINGS] };
+        }
+      }
+
+      try {
+        const stored = JSON.parse(localStorage.getItem('remotion_all_appointments') || 'null');
+        if (stored && Array.isArray(stored) && stored.length > 0) {
+          return { meetings: stored };
+        }
+      } catch (e) {}
+      return { meetings: DEFAULT_MEETINGS };
+    }
+
     if (endpoint.startsWith('/messages')) {
       if (options.method === 'POST') {
         const msg = {
@@ -569,20 +632,21 @@ class ApiService {
         };
         try {
           const stored = JSON.parse(localStorage.getItem('remotion_clinical_chat_messages') || '[]');
-          const exists = stored.some(m => m.id === msg.id || (m.message_text === msg.message_text && m.sender_id === msg.sender_id && Math.abs(new Date(m.created_at).getTime() - new Date(msg.created_at).getTime()) < 30000));
+          const list = Array.isArray(stored) ? stored : [];
+          const exists = list.some(m => m.id === msg.id || (m.message_text === msg.message_text && m.sender_id === msg.sender_id && Math.abs(new Date(m.created_at).getTime() - new Date(msg.created_at).getTime()) < 30000));
           if (!exists) {
-            stored.push(msg);
-            localStorage.setItem('remotion_clinical_chat_messages', JSON.stringify(stored));
+            list.push(msg);
+            localStorage.setItem('remotion_clinical_chat_messages', JSON.stringify(list));
           }
         } catch (e) {}
         return { success: true, message: msg };
       }
       try {
         const stored = JSON.parse(localStorage.getItem('remotion_clinical_chat_messages') || 'null');
-        if (stored) {
+        if (stored && Array.isArray(stored)) {
           const targetPt = endpoint.replace('/messages/', '').replace('/messages', '').trim();
           if (targetPt) {
-            return { messages: stored.filter(m => m.patient_id === targetPt || m.receiver_id === targetPt || m.sender_id === targetPt || (targetPt === 'pt_1' && (!m.patient_id || m.receiver_id === 'u_patient_1'))) };
+            return { messages: stored.filter(m => m && (m.patient_id === targetPt || m.receiver_id === targetPt || m.sender_id === targetPt || (targetPt === 'pt_1' && (!m.patient_id || m.receiver_id === 'u_patient_1')))) };
           }
           return { messages: stored };
         }

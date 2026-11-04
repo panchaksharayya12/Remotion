@@ -21,8 +21,25 @@ export default function App() {
     deviceName: 'Disconnected'
   });
 
-  // Check stored auth session on mount
+  // Check stored auth session on mount & sanitize stored state
   useEffect(() => {
+    try {
+      // Validate and sanitize localStorage to prevent corrupted old structures from impacting portals
+      ['remotion_patients_list', 'remotion_all_appointments', 'remotion_all_prescriptions', 'remotion_clinical_chat_messages'].forEach(key => {
+        const val = localStorage.getItem(key);
+        if (val) {
+          try {
+            const parsed = JSON.parse(val);
+            if (!Array.isArray(parsed)) {
+              localStorage.removeItem(key);
+            }
+          } catch (e) {
+            localStorage.removeItem(key);
+          }
+        }
+      });
+    } catch (e) {}
+
     if (api.user && api.token) {
       setCurrentUser(api.user);
       routeByRole(api.user.role);
@@ -200,25 +217,6 @@ export default function App() {
           )}
         </ErrorBoundary>
       </main>
-
-      {/* Permanent Academic Disclaimer Footer across all authenticated portals */}
-      <footer className={`w-full py-4 px-4 text-center text-xs font-mono transition-colors ${
-        currentPortal === 'patient'
-          ? 'bg-white border-t border-slate-200 text-slate-700'
-          : currentPortal === 'therapist'
-          ? 'bg-[#152a45] border-t border-blue-900/60 text-blue-200'
-          : 'bg-slate-950/90 border-t border-slate-900 text-slate-400'
-      }`}>
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center space-x-2">
-            <ShieldCheck className={`w-4 h-4 ${currentPortal === 'patient' ? 'text-teal-600' : 'text-cyan-400'}`} />
-            <span>Prototype - synthetic demo data - not a medical device. Built for academic research and motor rehabilitation support.</span>
-          </div>
-          <div className={`text-[11px] ${currentPortal === 'patient' ? 'text-slate-500' : 'text-slate-400'}`}>
-            ReMotion AR/VR XR2 • Multi-Portal Platform
-          </div>
-        </div>
-      </footer>
 
       {/* Headset & WebXR Device Modal */}
       <HeadsetModal

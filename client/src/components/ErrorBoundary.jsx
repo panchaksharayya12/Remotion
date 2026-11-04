@@ -16,6 +16,13 @@ export default class ErrorBoundary extends React.Component {
   }
 
   handleReset = () => {
+    try {
+      localStorage.removeItem('remotion_patients_list');
+      localStorage.removeItem('remotion_all_appointments');
+      localStorage.removeItem('remotion_all_prescriptions');
+      localStorage.removeItem('remotion_clinical_chat_messages');
+    } catch (e) {}
+
     this.setState({ hasError: false, error: null });
     if (this.props.onReset) {
       this.props.onReset();

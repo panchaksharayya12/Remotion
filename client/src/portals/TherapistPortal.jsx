@@ -168,7 +168,10 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       const stored = localStorage.getItem('remotion_patients_list');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const valid = parsed.filter(p => p && typeof p === 'object' && p.id && p.name);
+          if (valid.length > 0) return valid;
+        }
       }
     } catch (e) {}
     return DEFAULT_PATIENTS;
@@ -178,7 +181,9 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       const stored = localStorage.getItem('remotion_patients_list');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && parsed[0].id) {
+          return parsed[0].id;
+        }
       }
     } catch (e) {}
     return 'pt_1';
@@ -259,7 +264,10 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [appointments, setAppointments] = useState(() => {
     try {
       const saved = localStorage.getItem('remotion_all_appointments');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch (e) {}
     return DEFAULT_APPOINTMENTS;
   });
@@ -299,11 +307,12 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const loadPatients = async () => {
     try {
       const res = await api.getTherapistPatients();
-      if (res?.patients && res.patients.length > 0) {
+      if (res?.patients && Array.isArray(res.patients) && res.patients.length > 0) {
         setPatients(prev => {
-          const merged = [...res.patients];
-          (prev || []).forEach(p => {
-            if (!merged.some(m => m.id === p.id)) {
+          const validIncoming = res.patients.filter(p => p && p.id && p.name);
+          const merged = [...validIncoming];
+          (Array.isArray(prev) ? prev : []).forEach(p => {
+            if (p && p.id && !merged.some(m => m && m.id === p.id)) {
               merged.unshift(p);
             }
           });
@@ -320,7 +329,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const loadAppointments = async () => {
     try {
       const res = await api.getMeetings();
-      if (res?.meetings && res.meetings.length > 0) {
+      if (res?.meetings && Array.isArray(res.meetings) && res.meetings.length > 0) {
         setAppointments(res.meetings);
         try {
           localStorage.setItem('remotion_all_appointments', JSON.stringify(res.meetings));
@@ -1281,10 +1290,17 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     return true;
   });
 
-  const selectedPatient = (patients && patients.length > 0
-    ? patients.find(p => p.id === selectedPatientId) || patients[0]
-    : DEFAULT_PATIENTS[0]
-  ) || DEFAULT_PATIENTS[0];
+  const safePatients = Array.isArray(patients) && patients.length > 0
+    ? patients.filter(p => p && typeof p === 'object' && p.id && p.name)
+    : DEFAULT_PATIENTS;
+  const effectivePatients = safePatients.length > 0 ? safePatients : DEFAULT_PATIENTS;
+
+  const selectedPatient = (
+    effectivePatients.find(p => p && p.id === selectedPatientId) ||
+    effectivePatients[0] ||
+    DEFAULT_PATIENTS[0]
+  );
+  const safeAppointments = Array.isArray(appointments) ? appointments : DEFAULT_APPOINTMENTS;
 
   return (
     <div className="min-h-screen bg-[#f1f5f9] text-slate-800 pb-20 selection:bg-blue-200">
@@ -1437,7 +1453,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
 
               {/* Dynamic Appointment Cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {appointments.slice(0, 2).map((appt) => (
+                {safeAppointments.slice(0, 2).map((appt) => (
                   <div key={appt.id} className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
@@ -2197,7 +2213,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
               </div>
 
               <div className="space-y-4">
-                {appointments.map((appt) => (
+                {safeAppointments.map((appt) => (
                   <div key={appt.id} className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-start space-x-4">
                       <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold shrink-0">
@@ -2278,17 +2294,17 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-bold text-slate-800 uppercase font-mono flex items-center space-x-2">
                     <Clock className="w-4 h-4 text-blue-600" />
-                    <span>Scheduled Video Consultations ({appointments.length})</span>
+                    <span>Scheduled Video Consultations ({safeAppointments.length})</span>
                   </h3>
                 </div>
 
-                {appointments.length === 0 ? (
+                {safeAppointments.length === 0 ? (
                   <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 text-center text-xs text-slate-500">
                     No scheduled video meetings found. Use the Schedule Meeting button above to schedule a consultation.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {appointments.map((appt) => (
+                    {safeAppointments.map((appt) => (
                       <div key={appt.id} className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex flex-col justify-between">
                         <div>
                           <div className="flex items-center justify-between mb-1.5">
