@@ -574,10 +574,15 @@ class ApiService {
     return this.request(`/messages/${otherUserId}`);
   }
 
-  async sendMessage(receiverId, text, targetLanguage = 'hi') {
+  async sendMessage(receiverId, text, targetLanguage = 'hi', extra = {}) {
     return this.request('/messages', {
       method: 'POST',
-      body: JSON.stringify({ receiver_id: receiverId, message_text: text, target_language: targetLanguage })
+      body: JSON.stringify({
+        receiver_id: receiverId,
+        message_text: text,
+        target_language: targetLanguage,
+        ...extra
+      })
     });
   }
 

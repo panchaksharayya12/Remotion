@@ -352,20 +352,28 @@ export default async function handler(req, res) {
   // 4c. Real-Time Patient & Clinician Messages
   if (pathname === '/messages' || pathname.startsWith('/messages')) {
     if (req.method === 'POST') {
-      const { receiver_id = 'u_patient_1', message_text = '', target_language = 'hi' } = body;
+      const {
+        receiver_id = 'u_patient_1',
+        message_text = '',
+        target_language = 'hi',
+        sender_id: customSenderId,
+        sender_name: customSenderName,
+        translated_text: customTranslation
+      } = body;
       const isDoctor = req.headers.authorization && req.headers.authorization.includes('therapist');
-      const sender_id = isDoctor ? 'u_therapist_1' : 'u_patient_1';
-      const sender_name = isDoctor ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma';
+      const sender_id = customSenderId || (isDoctor ? 'u_therapist_1' : 'u_patient_1');
+      const sender_name = customSenderName || (sender_id === 'u_therapist_1' ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma');
       const newMsg = {
-        id: 'msg_' + Date.now().toString(36),
+        id: 'msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
         sender_id,
         sender_name,
         receiver_id,
         message_text,
-        translated_text: message_text,
+        translated_text: customTranslation || message_text,
         created_at: new Date().toISOString()
       };
       CLINICAL_MESSAGES.push(newMsg);
+      if (CLINICAL_MESSAGES.length > 300) CLINICAL_MESSAGES.shift();
       return res.status(200).json({ success: true, message: newMsg, messages: CLINICAL_MESSAGES });
     }
     return res.status(200).json({ messages: CLINICAL_MESSAGES });

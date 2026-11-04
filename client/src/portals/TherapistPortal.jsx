@@ -68,6 +68,36 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const syncChannelRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  // Synthesize pleasant WhatsApp-style message arrival audio blip
+  const playMessageTone = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.setValueAtTime(1200, now + 0.08);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      }
+    } catch (e) {}
+  };
+
+  // Auto-scroll to bottom of chat feed like WhatsApp
+  useEffect(() => {
+    if (isChatOpen) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, isChatOpen]);
 
   // Telehealth Appointments State
   const [appointments, setAppointments] = useState(() => {
@@ -348,14 +378,35 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         try {
           const data = JSON.parse(e.newValue);
           if (data.type === 'CHAT_MESSAGE' && data.message) {
-            setChatMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
+            setChatMessages(prev => {
+              if (prev.some(m => m.id === data.message.id)) return prev;
+              if (data.message.sender_id !== 'u_therapist_1') playMessageTone();
+              return [...prev, data.message];
+            });
           }
         } catch (err) {}
       }
     };
     window.addEventListener('storage', handleStorageEvent);
 
-    // Active localStorage polling fallback (every 400ms)
+    // Active localStorage polling for chat (every 300ms)
+    const localChatPoll = setInterval(() => {
+      try {
+        const raw = localStorage.getItem('remotion_chat_sync_signal');
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.type === 'CHAT_MESSAGE' && data.message) {
+            setChatMessages(prev => {
+              if (prev.some(m => m.id === data.message.id)) return prev;
+              if (data.message.sender_id !== 'u_therapist_1') playMessageTone();
+              return [...prev, data.message];
+            });
+          }
+        }
+      } catch (e) {}
+    }, 300);
+
+    // Active localStorage polling fallback for calls (every 400ms)
     const localSignalPoll = setInterval(() => {
       try {
         const raw = localStorage.getItem('remotion_telehealth_call_signal');
@@ -377,7 +428,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       } catch (e) {}
     }, 400);
 
-    // 3. Fast cross-browser SSE listener via ntfy.sh (bridges Edge to Chrome in <50ms)
+    // 3. Fast cross-browser SSE listener for Call Alerts
     let sseSource = null;
     try {
       sseSource = new EventSource('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1/sse');
@@ -401,7 +452,53 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       };
     } catch (e) {}
 
-    // Active ntfy.sh JSON Polling fallback
+    // 4. Fast cross-browser SSE listener for Real-Time Clinician Chat
+    let chatSseSource = null;
+    try {
+      chatSseSource = new EventSource('https://ntfy.sh/remotion_clinician_chat_sync/sse');
+      chatSseSource.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
+          if (raw.event === 'message' && raw.message) {
+            const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+            if (data.type === 'CHAT_MESSAGE' && data.message) {
+              setChatMessages(prev => {
+                if (prev.some(m => m.id === data.message.id)) return prev;
+                if (data.message.sender_id !== 'u_therapist_1') playMessageTone();
+                return [...prev, data.message];
+              });
+            }
+          }
+        } catch (e) {}
+      };
+    } catch (e) {}
+
+    // Active ntfy.sh Chat JSON Polling (every 1000ms)
+    const ntfyChatPoll = setInterval(async () => {
+      try {
+        const res = await fetch('https://ntfy.sh/remotion_clinician_chat_sync/json?since=15s');
+        const text = await res.text();
+        const lines = text.trim().split('\n');
+        for (const line of lines) {
+          if (!line) continue;
+          try {
+            const raw = JSON.parse(line);
+            if (raw.event === 'message' && raw.message) {
+              const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+              if (data.type === 'CHAT_MESSAGE' && data.message) {
+                setChatMessages(prev => {
+                  if (prev.some(m => m.id === data.message.id)) return prev;
+                  if (data.message.sender_id !== 'u_therapist_1') playMessageTone();
+                  return [...prev, data.message];
+                });
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }, 1000);
+
+    // Active ntfy.sh JSON Polling fallback for call alerts
     const ntfyPollInterval = setInterval(async () => {
       try {
         const res = await fetch('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1/json?since=20s');
@@ -431,7 +528,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       } catch (e) {}
     }, 1000);
 
-    // 4. Polling Serverless call alert API
+    // 5. Polling Serverless call alert API
     let alertPollInterval = setInterval(async () => {
       try {
         const res = await api.getCallAlerts('therapist', 'therapist');
@@ -451,6 +548,29 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           }
         }
       } catch (err) {}
+    }, 800);
+
+    // 6. Continuous fast API Chat Message polling (every 800ms)
+    const apiChatPoll = setInterval(async () => {
+      try {
+        const targetPtId = selectedPatientId || 'pt_1';
+        const res = await api.getMessages(targetPtId);
+        if (res?.messages && res.messages.length > 0) {
+          setChatMessages(prev => {
+            const map = new Map();
+            prev.forEach(m => map.set(m.id, m));
+            let hasNewIncoming = false;
+            res.messages.forEach(m => {
+              if (!map.has(m.id)) {
+                if (m.sender_id !== 'u_therapist_1') hasNewIncoming = true;
+                map.set(m.id, m);
+              }
+            });
+            if (hasNewIncoming) playMessageTone();
+            return Array.from(map.values()).sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+          });
+        }
+      } catch (e) {}
     }, 800);
 
     // 5. Socket.IO listeners
@@ -486,9 +606,15 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       if (sseSource) {
         try { sseSource.close(); } catch (e) {}
       }
+      if (chatSseSource) {
+        try { chatSseSource.close(); } catch (e) {}
+      }
       if (ntfyPollInterval) clearInterval(ntfyPollInterval);
+      if (ntfyChatPoll) clearInterval(ntfyChatPoll);
       if (localSignalPoll) clearInterval(localSignalPoll);
+      if (localChatPoll) clearInterval(localChatPoll);
       if (alertPollInterval) clearInterval(alertPollInterval);
+      if (apiChatPoll) clearInterval(apiChatPoll);
       window.removeEventListener('storage', handleStorageEvent);
       if (api.socket) {
         if (handlePatientSession) api.socket.off('patient_session_completed', handlePatientSession);
@@ -513,40 +639,63 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   };
 
   const handleSendTherapistMessage = async (customText = null) => {
-    const textToSend = customText || chatInput;
-    if (!textToSend.trim() || !selectedPatient?.user_id) return;
-    try {
-      const targetLang = selectedPatient.primary_language || 'hi';
-      const sent = await api.sendMessage(selectedPatient.user_id, textToSend, 'en', targetLang);
-      const msgObj = sent?.message || {
-        id: 'msg_' + Date.now().toString(36),
-        sender_id: 'u_therapist_1',
-        sender_name: 'Dr. Rajesh Kulkarni, PT',
-        receiver_id: selectedPatient.user_id,
-        message_text: textToSend,
-        created_at: new Date().toISOString()
-      };
-      setChatMessages(prev => [...prev, msgObj]);
+    const textToSend = (customText || chatInput).trim();
+    if (!textToSend || !selectedPatient?.user_id) return;
 
-      if (syncChannelRef.current) {
-        try {
-          syncChannelRef.current.postMessage({
-            type: 'CHAT_MESSAGE',
-            message: msgObj,
-            timestamp: Date.now()
-          });
-        } catch (e) {}
-      }
+    const tempId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
+    const msgObj = {
+      id: tempId,
+      sender_id: 'u_therapist_1',
+      sender_name: 'Dr. Rajesh Kulkarni, PT',
+      receiver_id: selectedPatient.user_id,
+      message_text: textToSend,
+      translated_text: textToSend,
+      created_at: new Date().toISOString()
+    };
 
+    // 1. Instant optimistic local UI update (0ms, WhatsApp feel)
+    setChatMessages(prev => [...prev.filter(m => m.id !== tempId), msgObj]);
+    if (!customText) setChatInput('');
+
+    // 2. Broadcast immediately across same-browser tabs (0ms)
+    if (syncChannelRef.current) {
       try {
-        localStorage.setItem('remotion_chat_sync_signal', JSON.stringify({
+        syncChannelRef.current.postMessage({
           type: 'CHAT_MESSAGE',
           message: msgObj,
           timestamp: Date.now()
-        }));
+        });
       } catch (e) {}
+    }
 
-      if (!customText) setChatInput('');
+    // 3. Store in localStorage for cross-window sync in same browser
+    try {
+      localStorage.setItem('remotion_chat_sync_signal', JSON.stringify({
+        type: 'CHAT_MESSAGE',
+        message: msgObj,
+        timestamp: Date.now()
+      }));
+    } catch (e) {}
+
+    // 4. Ultra-fast Cloud dispatch via ntfy.sh (<50ms across Edge, Chrome, Safari, mobile)
+    try {
+      fetch('https://ntfy.sh/remotion_clinician_chat_sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'CHAT_MESSAGE',
+          message: msgObj,
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 5. Persist to API
+    try {
+      const targetLang = selectedPatient.primary_language || 'hi';
+      await api.sendMessage(selectedPatient.user_id, textToSend, targetLang, {
+        sender_id: 'u_therapist_1',
+        sender_name: 'Dr. Rajesh Kulkarni, PT'
+      });
     } catch (err) {
       console.error('Failed to send therapist message:', err);
     }
@@ -1349,6 +1498,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                   );
                 })
               )}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Input Bar */}
