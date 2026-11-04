@@ -47,8 +47,10 @@ export default function VideoMeetingModal({
   ]);
   const [captions, setCaptions] = useState([
     {
-      speaker: 'Dr. Rajesh Kulkarni',
-      text: 'Hello Asha. Please observe how the elbow stabilizes while reaching the upper quadrants.',
+      speaker: isTherapist ? 'Dr. Rajesh Kulkarni' : (meeting?.patient_name || 'Patient'),
+      text: isTherapist
+        ? `Hello ${meeting?.patient_name || 'there'}. Ready for our clinical motor review and assessment.`
+        : 'Hello Doctor. Ready for our clinical video consultation.',
       time: 'Just now'
     }
   ]);
@@ -326,7 +328,8 @@ export default function VideoMeetingModal({
       ctx.fill();
       ctx.fillStyle = isDoc ? '#60a5fa' : '#2dd4bf';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(isDoc ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma (Patient)', 28, 444);
+      const displayName = isDoc ? (feedName || 'Dr. Rajesh Kulkarni, PT') : `${feedName || meeting?.patient_name || 'Patient'} (Patient)`;
+      ctx.fillText(displayName, 28, 444);
       ctx.fillStyle = '#94a3b8';
       ctx.font = '10px monospace';
       ctx.fillText(isDoc ? 'Supervising Clinician • 60 FPS' : 'Active Motor Rehabilitation • 60 FPS', 28, 458);
@@ -500,7 +503,7 @@ export default function VideoMeetingModal({
       if (remoteVideoRef.current && (!remoteVideoRef.current.srcObject || !remoteVideoRef.current.srcObject.active)) {
         const fallback = createLifelikeVideoFeed(
           data.role || (isTherapist ? 'patient' : 'therapist'),
-          data.userName || (isTherapist ? 'Asha Sharma' : 'Dr. Rajesh Kulkarni, PT'),
+          data.userName || (isTherapist ? (meeting?.patient_name || 'Patient') : (meeting?.therapist_name || 'Dr. Rajesh Kulkarni, PT')),
           remoteAnimFrameRef
         );
         remoteFallbackStreamRef.current = fallback;
@@ -609,7 +612,7 @@ export default function VideoMeetingModal({
       if (remoteVideoRef.current) {
         const initialRemoteFeed = createLifelikeVideoFeed(
           isTherapist ? 'patient' : 'therapist',
-          isTherapist ? 'Asha Sharma' : 'Dr. Rajesh Kulkarni, PT',
+          isTherapist ? (meeting?.patient_name || 'Patient') : (meeting?.therapist_name || 'Dr. Rajesh Kulkarni, PT'),
           remoteAnimFrameRef
         );
         remoteFallbackStreamRef.current = initialRemoteFeed;
@@ -1014,11 +1017,11 @@ export default function VideoMeetingModal({
                 onChange={(e) => setSelectedLanguage(e.target.value)}
                 className="bg-transparent text-white focus:outline-none cursor-pointer"
               >
+                <option value="en" className="bg-slate-900">English (Default)</option>
                 <option value="hi" className="bg-slate-900">Hindi</option>
                 <option value="kn" className="bg-slate-900">Kannada</option>
                 <option value="ta" className="bg-slate-900">Tamil</option>
                 <option value="te" className="bg-slate-900">Telugu</option>
-                <option value="en" className="bg-slate-900">English</option>
               </select>
             </div>
 

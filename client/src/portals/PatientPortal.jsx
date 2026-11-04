@@ -17,6 +17,7 @@ import RemoAssistant from '../components/RemoAssistant';
 import PlayableGameModal from './PlayableGameModal';
 import GameThumbnail from '../components/GameThumbnail';
 import ClinicalRecoveryBarChart from '../components/ClinicalRecoveryBarChart';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 // Bulletproof Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
 const isSameSenderRole = (m1, m2) => {
@@ -469,15 +470,17 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         setRealtimeNotice(`New video meeting scheduled: ${data.appointment.title}`);
         setTimeout(() => setRealtimeNotice(null), 6000);
       } else if (data.type === 'PRESCRIPTION_CREATED' && data.prescription) {
-        setRealtimeNotice(`New exercise prescribed: ${data.prescription.exercise_name || 'Rehabilitation Routine'}`);
-        setDashboardData(prev => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            prescriptions: [data.prescription, ...(prev.prescriptions || []).filter(p => p.id !== data.prescription.id)]
-          };
-        });
-        setTimeout(() => setRealtimeNotice(null), 7000);
+        if (!data.patient_id || data.patient_id === myPatientId || data.patient_id === 'all') {
+          setRealtimeNotice(`New exercise prescribed: ${data.prescription.exercise_name || 'Rehabilitation Routine'}`);
+          setDashboardData(prev => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              prescriptions: [data.prescription, ...(prev.prescriptions || []).filter(p => p.id !== data.prescription.id)]
+            };
+          });
+          setTimeout(() => setRealtimeNotice(null), 7000);
+        }
       } else if (data.type === 'CHAT_MESSAGE' && data.message) {
         if (doesMessageMatchMe(data.message)) {
           setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
@@ -497,11 +500,12 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         try {
           const data = JSON.parse(e.newValue);
           if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
+            if (data.targetPatientId && data.targetPatientId !== myPatientId && data.targetPatientId !== 'all') return;
             playRingChime();
             setIncomingCall({
               callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
               meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
-              roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+              roomId: data.meeting?.room_id || `remotion-room-${myPatientId}`,
               meeting: data.meeting
             });
           }
@@ -510,15 +514,17 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         try {
           const data = JSON.parse(e.newValue);
           if (data.type === 'PRESCRIPTION_CREATED' && data.prescription) {
-            setRealtimeNotice(`New exercise prescribed: ${data.prescription.exercise_name || 'Rehabilitation Routine'}`);
-            setDashboardData(prev => {
-              if (!prev) return prev;
-              return {
-                ...prev,
-                prescriptions: [data.prescription, ...(prev.prescriptions || []).filter(p => p.id !== data.prescription.id)]
-              };
-            });
-            setTimeout(() => setRealtimeNotice(null), 7000);
+            if (!data.patient_id || data.patient_id === myPatientId || data.patient_id === 'all') {
+              setRealtimeNotice(`New exercise prescribed: ${data.prescription.exercise_name || 'Rehabilitation Routine'}`);
+              setDashboardData(prev => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  prescriptions: [data.prescription, ...(prev.prescriptions || []).filter(p => p.id !== data.prescription.id)]
+                };
+              });
+              setTimeout(() => setRealtimeNotice(null), 7000);
+            }
           }
         } catch (err) {}
       } else if (e.key === 'remotion_chat_sync_signal' && e.newValue) {
@@ -882,6 +888,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
+        <ErrorBoundary onReset={() => setActiveTab('dashboard')}>
 
         {/* ======================================================== */}
         {/* TAB 1: MY DASHBOARD                                      */}
@@ -1664,6 +1671,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             </div>
           </div>
         )}
+        </ErrorBoundary>
 
       </main>
 

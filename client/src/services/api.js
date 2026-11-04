@@ -244,6 +244,83 @@ class ApiService {
       return { success: true, token: 'tok_resilient_' + Date.now(), user };
     }
 
+    if (endpoint === '/auth/register') {
+      const cleanEmail = (body.email || '').trim().toLowerCase();
+      const cleanName = (body.name || 'New Patient').trim();
+      const role = body.role || 'patient';
+      const newUserId = 'u_' + Date.now().toString(36);
+      const newPtId = 'pt_' + Date.now().toString(36);
+      const newUser = {
+        id: newUserId,
+        email: cleanEmail,
+        role,
+        name: cleanName,
+        avatar: cleanName.slice(0, 2).toUpperCase(),
+        phone: body.phone || '+91 98450 00000',
+        profile: {
+          id: newPtId,
+          user_id: newUserId,
+          name: cleanName,
+          age: 48,
+          gender: 'Patient',
+          condition: body.condition || 'Post-Stroke Motor Rehabilitation',
+          recovery_level: 'Stage 3 Recovery',
+          affected_side: 'Right Upper Limb',
+          xp: 150,
+          streak: 1,
+          level: 1,
+          compliance: '100%',
+          primary_language: 'en',
+          emergency_contact: '+91 98450 12345',
+          total_sessions: 1,
+          avg_accuracy: 92.0,
+          peak_rom: 58.0,
+          active_prescriptions_count: 2,
+          notes: `Clinical enrollment completed for ${cleanName}.`
+        }
+      };
+
+      if (role === 'patient') {
+        const newPatientRecord = newUser.profile;
+        CLINICAL_DATASETS.patients.unshift(newPatientRecord);
+        const rx1 = {
+          id: 'rx_' + newPtId + '_sq',
+          patient_id: newPtId,
+          patient_name: cleanName,
+          exercise_id: 'ex_squeeze_fill',
+          exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+          target_reps: 15,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: `Active finger flexion and extension routine customized for ${cleanName}.`,
+          clinical_notes: `Prescribed based on condition: ${newPatientRecord.condition}.`,
+          status: 'active',
+          created_at: new Date().toISOString()
+        };
+        const rx2 = {
+          id: 'rx_' + newPtId + '_reach',
+          patient_id: newPtId,
+          patient_name: cleanName,
+          exercise_id: 'ex_reach_touch',
+          exercise_name: 'Reach & Touch (3D Spatial Coordination)',
+          target_reps: 20,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: 'Spatial reaching targets to rebuild functional shoulder and elbow extension.',
+          clinical_notes: 'Assess movement latency and trunk compensation.',
+          status: 'active',
+          created_at: new Date().toISOString()
+        };
+        CLINICAL_DATASETS.prescriptions.unshift(rx1, rx2);
+        try {
+          localStorage.setItem('remotion_patients_list', JSON.stringify(CLINICAL_DATASETS.patients));
+          localStorage.setItem('remotion_all_prescriptions', JSON.stringify(CLINICAL_DATASETS.prescriptions));
+        } catch (e) {}
+      }
+
+      return { success: true, token: 'tok_resilient_' + Date.now(), user: newUser, patient: newUser.profile };
+    }
+
     if (endpoint === '/auth/demo-switch') {
       const role = body.role || 'patient';
       const email = role === 'therapist' ? 'therapist@remotion.health' :
@@ -316,6 +393,43 @@ class ApiService {
           notes: body.notes || 'Clinical record initialized.'
         };
         CLINICAL_DATASETS.patients.unshift(newPt);
+
+        // Pre-create 2 tailored active prescriptions
+        const rx1 = {
+          id: 'rx_' + newId + '_sq',
+          patient_id: newId,
+          patient_name: newPt.name,
+          exercise_id: 'ex_squeeze_fill',
+          exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+          target_reps: 15,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: `Active finger flexion and extension routine customized for ${newPt.name}.`,
+          clinical_notes: `Prescribed based on condition: ${newPt.condition}.`,
+          status: 'active',
+          created_at: new Date().toISOString()
+        };
+        const rx2 = {
+          id: 'rx_' + newId + '_reach',
+          patient_id: newId,
+          patient_name: newPt.name,
+          exercise_id: 'ex_reach_touch',
+          exercise_name: 'Reach & Touch (3D Spatial Coordination)',
+          target_reps: 20,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: 'Spatial reaching targets to rebuild functional shoulder and elbow extension.',
+          clinical_notes: 'Assess movement latency and trunk compensation.',
+          status: 'active',
+          created_at: new Date().toISOString()
+        };
+        CLINICAL_DATASETS.prescriptions.unshift(rx1, rx2);
+
+        try {
+          localStorage.setItem('remotion_patients_list', JSON.stringify(CLINICAL_DATASETS.patients));
+          localStorage.setItem('remotion_all_prescriptions', JSON.stringify(CLINICAL_DATASETS.prescriptions));
+        } catch (e) {}
+
         return { success: true, patient: newPt, patients: CLINICAL_DATASETS.patients };
       }
       return { patients: CLINICAL_DATASETS.patients };
@@ -327,19 +441,93 @@ class ApiService {
         const idx = CLINICAL_DATASETS.patients.findIndex(p => p.id === ptId);
         if (idx !== -1) {
           CLINICAL_DATASETS.patients[idx] = { ...CLINICAL_DATASETS.patients[idx], ...body };
+          try {
+            localStorage.setItem('remotion_patients_list', JSON.stringify(CLINICAL_DATASETS.patients));
+          } catch (e) {}
           return { success: true, patient: CLINICAL_DATASETS.patients[idx], patients: CLINICAL_DATASETS.patients };
         }
       }
-      const pt = CLINICAL_DATASETS.patients.find(p => p.id === ptId) || CLINICAL_DATASETS.patients[0];
+
+      let pt = CLINICAL_DATASETS.patients.find(p => p.id === ptId);
+      if (!pt) {
+        try {
+          const stored = localStorage.getItem('remotion_patients_list');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            const found = parsed.find(p => p.id === ptId);
+            if (found) {
+              pt = found;
+              CLINICAL_DATASETS.patients.unshift(found);
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (!pt) {
+        pt = ptId === 'pt_1' ? CLINICAL_DATASETS.patients[0] : {
+          id: ptId,
+          user_id: 'u_' + ptId,
+          name: 'Patient ' + ptId.replace('pt_', ''),
+          age: 52,
+          gender: 'Not Specified',
+          condition: 'Post-Stroke Left Upper Limb Hemiparesis',
+          recovery_level: 'Stage 3 Recovery',
+          affected_side: 'Left Upper Limb',
+          primary_language: 'en',
+          emergency_contact: '+91 98450 12345',
+          total_sessions: 1,
+          avg_accuracy: 92.0,
+          peak_rom: 62.0,
+          level: 3,
+          streak: 1,
+          compliance: '100%',
+          active_prescriptions_count: 2,
+          notes: 'Clinical record initialized.'
+        };
+      }
+
+      let prescriptions = CLINICAL_DATASETS.prescriptions.filter(p => p.patient_id === pt.id);
+      if (prescriptions.length === 0) {
+        prescriptions = [
+          {
+            id: 'rx_' + pt.id + '_sq',
+            patient_id: pt.id,
+            patient_name: pt.name,
+            exercise_id: 'ex_squeeze_fill',
+            exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+            target_reps: 15,
+            frequency: 'Daily',
+            difficulty: 'Moderate',
+            instructions: `Active finger flexion routine customized for ${pt.name}.`,
+            clinical_notes: `Prescribed based on condition: ${pt.condition}.`,
+            status: 'active',
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 'rx_' + pt.id + '_reach',
+            patient_id: pt.id,
+            patient_name: pt.name,
+            exercise_id: 'ex_reach_touch',
+            exercise_name: 'Reach & Touch (3D Spatial Coordination)',
+            target_reps: 20,
+            frequency: 'Daily',
+            difficulty: 'Moderate',
+            instructions: 'Spatial reaching targets to rebuild functional shoulder and elbow extension.',
+            clinical_notes: 'Assess movement latency and trunk compensation.',
+            status: 'active',
+            created_at: new Date().toISOString()
+          }
+        ];
+        CLINICAL_DATASETS.prescriptions.unshift(...prescriptions);
+      }
+
       return {
         patient: pt,
-        prescriptions: CLINICAL_DATASETS.prescriptions.filter(p => p.patient_id === pt.id),
+        prescriptions,
         recovery_metrics: [
-          { session: 'Baseline', rom: 45, accuracy: 72 },
-          { session: 'Week 1', rom: 58, accuracy: 80 },
-          { session: 'Week 2', rom: 68, accuracy: 86 },
-          { session: 'Week 3', rom: 76, accuracy: 91 },
-          { session: 'Current', rom: pt.peak_rom || 82, accuracy: pt.avg_accuracy || 94 }
+          { session: 'Baseline', rom: 42, accuracy: 72 },
+          { session: 'Session 1', rom: 55, accuracy: 82 },
+          { session: 'Current', rom: pt.peak_rom || 62, accuracy: pt.avg_accuracy || 92 }
         ]
       };
     }

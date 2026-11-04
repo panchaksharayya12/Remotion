@@ -12,6 +12,70 @@ import VideoMeetingModal from '../components/VideoMeetingModal';
 import RemoAssistant from '../components/RemoAssistant';
 import ClinicalRecoveryBarChart from '../components/ClinicalRecoveryBarChart';
 import PlayableGameModal from './PlayableGameModal';
+import ErrorBoundary from '../components/ErrorBoundary';
+
+const DEFAULT_PATIENTS = [
+  {
+    id: 'pt_1',
+    user_id: 'u_patient_1',
+    name: 'Asha Sharma',
+    age: 58,
+    gender: 'Female',
+    condition: 'Post-Stroke Left Upper Limb Hemiparesis',
+    recovery_level: 'Stage 4 Intermediate',
+    affected_side: 'Left Upper Limb',
+    primary_language: 'hi',
+    emergency_contact: '+91 98450 99991',
+    total_sessions: 6,
+    avg_accuracy: 94.2,
+    peak_rom: 82.5,
+    streak: 7,
+    compliance: '96%',
+    active_prescriptions_count: 3,
+    level: 4,
+    notes: 'Rehabilitation focus: Active flexion & extension, functional reach.'
+  },
+  {
+    id: 'pt_2',
+    user_id: 'u_patient_2',
+    name: 'Ravi Patel',
+    age: 34,
+    gender: 'Male',
+    condition: 'Flexor Tendon Strain & Carpal Tunnel Syndrome',
+    recovery_level: 'Stage 2 Early',
+    affected_side: 'Right Upper Limb',
+    primary_language: 'en',
+    emergency_contact: '+91 98450 11223',
+    total_sessions: 3,
+    avg_accuracy: 88.0,
+    peak_rom: 65.0,
+    streak: 3,
+    compliance: '92%',
+    active_prescriptions_count: 2,
+    level: 2,
+    notes: 'Focus on gentle finger extension and wrist mobilization.'
+  },
+  {
+    id: 'pt_3',
+    user_id: 'u_patient_3',
+    name: 'Meena Sundaram',
+    age: 62,
+    gender: 'Female',
+    condition: 'Post-Ischemic Stroke Right Upper Limb Spasticity',
+    recovery_level: 'Stage 5 Advanced',
+    affected_side: 'Right Upper Limb',
+    primary_language: 'ta',
+    emergency_contact: '+91 98450 44556',
+    total_sessions: 12,
+    avg_accuracy: 96.5,
+    peak_rom: 86.0,
+    streak: 14,
+    compliance: '98%',
+    active_prescriptions_count: 3,
+    level: 5,
+    notes: 'Advanced functional coordination and rapid grasping.'
+  }
+];
 
 const THERAPIST_TABS = [
   { id: 'overview', label: 'Overview', icon: Activity },
@@ -99,8 +163,26 @@ const mergeAndDeduplicateMessages = (prevList, incoming) => {
 
 export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [activeTab, setActiveTab] = useState('overview'); // 11 clinical tabs
-  const [patients, setPatients] = useState([]);
-  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [patients, setPatients] = useState(() => {
+    try {
+      const stored = localStorage.getItem('remotion_patients_list');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return DEFAULT_PATIENTS;
+  });
+  const [selectedPatientId, setSelectedPatientId] = useState(() => {
+    try {
+      const stored = localStorage.getItem('remotion_patients_list');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+      }
+    } catch (e) {}
+    return 'pt_1';
+  });
   const [patientDetail, setPatientDetail] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [patientFilter, setPatientFilter] = useState('all'); // 'all', 'stroke', 'spinal', 'ortho'
@@ -218,10 +300,15 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     try {
       const res = await api.getTherapistPatients();
       if (res?.patients && res.patients.length > 0) {
-        setPatients(res.patients);
-        if (!selectedPatientId) {
-          setSelectedPatientId(res.patients[0].id);
-        }
+        setPatients(prev => {
+          const merged = [...res.patients];
+          (prev || []).forEach(p => {
+            if (!merged.some(m => m.id === p.id)) {
+              merged.unshift(p);
+            }
+          });
+          return merged;
+        });
       }
       setLoading(false);
     } catch (err) {
@@ -747,6 +834,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     const tempId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
     const msgObj = {
       id: tempId,
+      patient_id: selectedPatient.id,
       sender_id: 'u_therapist_1',
       sender_name: 'Dr. Rajesh Kulkarni, PT',
       receiver_id: targetUserId,
@@ -764,6 +852,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       try {
         syncChannelRef.current.postMessage({
           type: 'CHAT_MESSAGE',
+          patient_id: selectedPatient.id,
           message: msgObj,
           timestamp: Date.now()
         });
@@ -774,6 +863,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     try {
       localStorage.setItem('remotion_chat_sync_signal', JSON.stringify({
         type: 'CHAT_MESSAGE',
+        patient_id: selectedPatient.id,
         message: msgObj,
         timestamp: Date.now()
       }));
@@ -785,17 +875,19 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         method: 'POST',
         body: JSON.stringify({
           type: 'CHAT_MESSAGE',
+          patient_id: selectedPatient.id,
           message: msgObj,
           timestamp: Date.now()
         })
       }).catch(() => {});
     } catch (e) {}
 
-    // 5. Persist to API with id passed to prevent duplication
+    // 5. Persist to API with id and patient_id passed to prevent duplication
     try {
-      const targetLang = selectedPatient.primary_language || 'hi';
+      const targetLang = selectedPatient.primary_language || 'en';
       await api.sendMessage(targetUserId, textToSend, targetLang, {
         id: tempId,
+        patient_id: selectedPatient.id,
         sender_id: 'u_therapist_1',
         sender_name: 'Dr. Rajesh Kulkarni, PT'
       });
@@ -887,6 +979,89 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     } catch (err) {
       console.error('Create prescription error:', err);
     }
+  };
+
+  const handleAssignExerciseToPatient = async (game) => {
+    const targetPt = selectedPatient || patients[0];
+    if (!targetPt) return;
+
+    const exerciseIdMap = {
+      gm_squeeze: 'ex_squeeze_fill',
+      gm_reacher: 'ex_reach_touch',
+      gm_rhythm: 'ex_pronation',
+      gm_zen: 'ex_pinch_tracker'
+    };
+    const mappedExId = exerciseIdMap[game.id] || 'ex_squeeze_fill';
+    const reps = parseInt(game.target, 10) || 15;
+
+    const newPrescription = {
+      id: 'rx_' + Date.now().toString(36),
+      patient_id: targetPt.id,
+      patient_name: targetPt.name,
+      exercise_id: mappedExId,
+      exercise_name: `${game.title} (${game.category})`,
+      target_reps: reps,
+      frequency: 'Daily',
+      difficulty: 'Moderate',
+      duration_minutes: 15,
+      instructions: game.desc || `Complete ${game.target} targeting ${game.category}.`,
+      clinical_notes: `Prescribed interactively for ${targetPt.name} under ${targetPt.condition}.`,
+      status: 'active',
+      created_at: new Date().toISOString()
+    };
+
+    try {
+      await api.createPrescription(newPrescription);
+    } catch (e) {}
+
+    // 1. Optimistic update in patientDetail
+    setPatientDetail(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        prescriptions: [newPrescription, ...(prev.prescriptions || []).filter(p => p.id !== newPrescription.id)]
+      };
+    });
+
+    // 2. BroadcastChannel
+    if (syncChannelRef.current) {
+      try {
+        syncChannelRef.current.postMessage({
+          type: 'PRESCRIPTION_CREATED',
+          patient_id: targetPt.id,
+          prescription: newPrescription,
+          timestamp: Date.now()
+        });
+      } catch (e) {}
+    }
+
+    // 3. LocalStorage
+    try {
+      const stored = JSON.parse(localStorage.getItem('remotion_all_prescriptions') || '[]');
+      stored.unshift(newPrescription);
+      localStorage.setItem('remotion_all_prescriptions', JSON.stringify(stored));
+      localStorage.setItem('remotion_prescription_sync_signal', JSON.stringify({
+        type: 'PRESCRIPTION_CREATED',
+        patient_id: targetPt.id,
+        prescription: newPrescription,
+        timestamp: Date.now()
+      }));
+    } catch (e) {}
+
+    // 4. Cloud pub/sub
+    try {
+      fetch('https://ntfy.sh/remotion_prescriptions_sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'PRESCRIPTION_CREATED',
+          patient_id: targetPt.id,
+          prescription: newPrescription
+        })
+      }).catch(() => {});
+    } catch (e) {}
+
+    setToastMessage(`Prescribed "${game.title}" to ${targetPt.name}. Synchronized immediately to patient portal.`);
+    setTimeout(() => setToastMessage(null), 5000);
   };
 
   const handleUpdateStatus = async (prescriptionId, status) => {
@@ -1075,6 +1250,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       }
 
       setShowNewPatientModal(false);
+      setActiveTab('details');
       setNewPatientForm({
         name: '',
         condition: 'Post-Stroke Left Upper Limb Hemiparesis',
@@ -1092,17 +1268,23 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     }
   };
 
-  const filteredPatients = patients.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          p.condition.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredPatients = (patients || []).filter(p => {
+    if (!p) return false;
+    const name = (p.name || '').toLowerCase();
+    const cond = (p.condition || '').toLowerCase();
+    const term = (searchTerm || '').toLowerCase();
+    const matchesSearch = name.includes(term) || cond.includes(term);
     if (!matchesSearch) return false;
-    if (patientFilter === 'stroke') return p.condition.toLowerCase().includes('stroke') || p.condition.toLowerCase().includes('hemiparesis');
-    if (patientFilter === 'spinal') return p.condition.toLowerCase().includes('spinal');
-    if (patientFilter === 'ortho') return p.condition.toLowerCase().includes('ortho') || p.condition.toLowerCase().includes('rom');
+    if (patientFilter === 'stroke') return cond.includes('stroke') || cond.includes('hemiparesis');
+    if (patientFilter === 'spinal') return cond.includes('spinal');
+    if (patientFilter === 'ortho') return cond.includes('ortho') || cond.includes('rom');
     return true;
   });
 
-  const selectedPatient = patients.find(p => p.id === selectedPatientId) || patients[0];
+  const selectedPatient = (patients && patients.length > 0
+    ? patients.find(p => p.id === selectedPatientId) || patients[0]
+    : DEFAULT_PATIENTS[0]
+  ) || DEFAULT_PATIENTS[0];
 
   return (
     <div className="min-h-screen bg-[#f1f5f9] text-slate-800 pb-20 selection:bg-blue-200">
@@ -1188,6 +1370,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           })}
         </div>
 
+        <ErrorBoundary onReset={() => setActiveTab('overview')}>
         {/* ========================================================================= */}
         {/* TAB 1: OVERVIEW                                                           */}
         {/* ========================================================================= */}
@@ -1815,15 +1998,43 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         {/* ========================================================================= */}
         {activeTab === 'games' && (
           <div className="space-y-6 animate-fadeIn">
+            {/* Caseload Patient Selector for Exercise Prescription */}
+            <div className="bg-white border border-slate-200 rounded-3xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-mono font-bold text-slate-500 uppercase">Target Patient Caseload:</span>
+                <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-xl border border-blue-200">
+                  Assigning to: {selectedPatient?.name || 'Asha Sharma'}
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-2 overflow-x-auto scrollbar-none">
+                {patients.map(pt => (
+                  <button
+                    key={pt.id}
+                    onClick={() => setSelectedPatientId(pt.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                      selectedPatient?.id === pt.id
+                        ? 'bg-blue-600 text-white shadow-sm font-bold'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {pt.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-              <div className="pb-4 border-b border-slate-100 mb-6">
-                <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2">
-                  <Dumbbell className="w-5 h-5 text-blue-600" />
-                  <span>Interactive Motor Exercises & Biofeedback Assignment</span>
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Configure interactive virtual motor exercises with custom kinematic target thresholds. Prescribed protocols synchronize with the patient's routine.
-                </p>
+              <div className="pb-4 border-b border-slate-100 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2">
+                    <Dumbbell className="w-5 h-5 text-blue-600" />
+                    <span>Interactive Motor Exercises & Biofeedback Assignment</span>
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Assign tailored motor exercises with custom biofeedback. Assigned protocols instantly appear in {selectedPatient?.name || 'patient'}'s rehabilitation routine.
+                  </p>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1880,13 +2091,10 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                           <span>Test Exercise</span>
                         </button>
                         <button
-                          onClick={() => {
-                            setToastMessage(`Prescribed exercise "${game.title}" to ${selectedPatient?.name || 'patient'}.`);
-                            setTimeout(() => setToastMessage(null), 5000);
-                          }}
-                          className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm cursor-pointer"
+                          onClick={() => handleAssignExerciseToPatient(game)}
+                          className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm cursor-pointer transition-all"
                         >
-                          Prescribe Exercise
+                          Assign to {selectedPatient?.name?.split(' ')[0] || 'Patient'}
                         </button>
                       </div>
                     </div>
@@ -2047,61 +2255,135 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                     <span>Clinical Telehealth Video Meetings Suite</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Encrypted direct WebRTC video meetings with automatic dual-start notification.
+                    Direct WebRTC video meetings with automatic dual-start notification and instant patient reach.
                   </p>
                 </div>
-                <span className="text-xs font-mono bg-emerald-50 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-200 flex items-center space-x-1.5 self-start sm:self-auto">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span>{patients.length} Patients Available</span>
-                </span>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => setShowScheduleModal(true)}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Schedule Meeting</span>
+                  </button>
+                  <span className="text-xs font-mono bg-emerald-50 text-emerald-800 font-bold px-3 py-1.5 rounded-full border border-emerald-200 flex items-center space-x-1.5 self-start sm:self-auto">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>{patients.length} Patients Ready</span>
+                  </span>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {patients.map((pt) => (
-                  <div key={pt.id} className="p-5 rounded-2xl bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-bold text-sm text-slate-900">{pt.name}</span>
-                        <span className="text-[10px] font-mono bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">
-                          {pt.condition || 'Neuro-Rehab'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 font-mono">
-                        Compliance: <span className="font-bold text-emerald-600">{pt.compliance || '94%'}</span> • Level: <span className="font-bold text-blue-600">{pt.level || '3'}</span>
-                      </p>
-                    </div>
+              {/* Upcoming Scheduled Video Meetings */}
+              <div className="mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase font-mono flex items-center space-x-2">
+                    <Clock className="w-4 h-4 text-blue-600" />
+                    <span>Scheduled Video Consultations ({appointments.length})</span>
+                  </h3>
+                </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-200 flex items-center space-x-2">
-                      <button
-                        onClick={() => startImmediateCall({
-                          title: `Clinical Video Meeting with ${pt.name}`,
-                          patient_id: pt.id,
-                          patient_name: pt.name,
-                          room_id: `remotion-room-${pt.id}`
-                        })}
-                        className="flex-1 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-sm shadow-blue-600/20 cursor-pointer"
-                      >
-                        <Video className="w-3.5 h-3.5" />
-                        <span>Start Video Call</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setScheduleForm(prev => ({
-                            ...prev,
-                            patient_id: pt.id,
-                            title: `Video Consultation with ${pt.name}`
-                          }));
-                          setShowScheduleModal(true);
-                        }}
-                        className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center space-x-1 cursor-pointer"
-                      >
-                        <Calendar className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Schedule</span>
-                      </button>
-                    </div>
+                {appointments.length === 0 ? (
+                  <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 text-center text-xs text-slate-500">
+                    No scheduled video meetings found. Use the Schedule Meeting button above to schedule a consultation.
                   </div>
-                ))}
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {appointments.map((appt) => (
+                      <div key={appt.id} className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-sm font-bold text-blue-950">{appt.title}</span>
+                            <span className="text-[10px] font-mono bg-blue-200 text-blue-800 font-bold px-2 py-0.5 rounded-full uppercase">
+                              {appt.status || 'SCHEDULED'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-700">
+                            Patient: <span className="font-bold text-slate-900">{appt.patient_name || 'Asha Sharma'}</span>
+                          </p>
+                          <div className="text-xs font-mono text-blue-700 font-semibold mt-1 flex items-center space-x-1.5">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>{appt.scheduled_time} ({appt.duration_minutes || 30} mins)</span>
+                          </div>
+                          {appt.notes && (
+                            <p className="text-xs text-slate-600 mt-2 bg-white p-2.5 rounded-xl border border-blue-100">
+                              {appt.notes}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="mt-3 pt-2.5 border-t border-blue-100 flex items-center justify-between">
+                          <button
+                            onClick={() => startImmediateCall(appt)}
+                            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md shadow-blue-600/20 flex items-center space-x-1.5 cursor-pointer"
+                          >
+                            <Video className="w-3.5 h-3.5" />
+                            <span>Launch Video Meeting</span>
+                          </button>
+                          <span className="text-[11px] text-emerald-600 font-mono font-medium flex items-center space-x-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span>Dual-Start Ready</span>
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Direct Instant Video Call Directory for Caseload */}
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase font-mono mb-4 flex items-center space-x-2">
+                  <Users className="w-4 h-4 text-blue-600" />
+                  <span>Instant Telehealth Calling Directory (Direct Caseload)</span>
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {patients.map((pt) => (
+                    <div key={pt.id} className="p-5 rounded-2xl bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-bold text-sm text-slate-900">{pt.name}</span>
+                          <span className="text-[10px] font-mono bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">
+                            {pt.condition || 'Neuro-Rehab'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 font-mono">
+                          Compliance: <span className="font-bold text-emerald-600">{pt.compliance || '94%'}</span> • Level: <span className="font-bold text-blue-600">{pt.level || '3'}</span>
+                        </p>
+                      </div>
+
+                      <div className="mt-4 pt-3 border-t border-slate-200 flex items-center space-x-2">
+                        <button
+                          onClick={() => startImmediateCall({
+                            title: `Clinical Video Meeting with ${pt.name}`,
+                            patient_id: pt.id,
+                            patient_name: pt.name,
+                            room_id: `remotion-room-${pt.id}`
+                          })}
+                          className="flex-1 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-sm shadow-blue-600/20 cursor-pointer"
+                        >
+                          <Video className="w-3.5 h-3.5" />
+                          <span>Start Video Call</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setScheduleForm(prev => ({
+                              ...prev,
+                              patient_id: pt.id,
+                              title: `Video Consultation with ${pt.name}`
+                            }));
+                            setShowScheduleModal(true);
+                          }}
+                          className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center space-x-1 cursor-pointer"
+                        >
+                          <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Schedule</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -2229,6 +2511,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
             </div>
           </div>
         )}
+        </ErrorBoundary>
       </div>
 
       {/* Prescription Builder Modal */}
@@ -2452,17 +2735,17 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
             <div className="p-4 bg-gradient-to-r from-blue-700 to-indigo-700 text-white flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white font-bold text-sm">
-                  {selectedPatient.name.slice(0, 2).toUpperCase()}
+                  {(selectedPatient?.name || 'PT').slice(0, 2).toUpperCase()}
                 </div>
                 <div>
                   <h4 className="text-sm font-bold flex items-center space-x-2">
-                    <span>Clinical Channel: {selectedPatient.name}</span>
+                    <span>Clinical Channel: {selectedPatient?.name || 'Patient'}</span>
                     <span className="text-[10px] font-mono bg-white/20 px-2 py-0.5 rounded-full font-bold">
-                      Primary: {selectedPatient.primary_language?.toUpperCase() || 'HI'}
+                      Primary: {selectedPatient?.primary_language?.toUpperCase() || 'EN'}
                     </span>
                   </h4>
                   <div className="text-[11px] text-blue-100">
-                    {selectedPatient.condition}
+                    {selectedPatient?.condition || 'Motor Rehabilitation'}
                   </div>
                 </div>
               </div>
@@ -2626,13 +2909,13 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
             </div>
 
             <h3 className="text-xl font-bold text-white font-display">
-              {incomingCall.callerName || 'Asha Sharma (Patient)'}
+              {incomingCall.callerName || incomingCall.meeting?.patient_name || 'Patient'}
             </h3>
             <p className="text-xs text-blue-300 font-mono mt-1">
               {incomingCall.meetingTitle || 'Clinical Telehealth Review & Video Meeting'}
             </p>
             <p className="text-[11px] text-slate-300 mt-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 font-medium">
-              Your patient Asha Sharma has initiated an instant video meeting. Connect now to begin clinical motor review.
+              Your patient {incomingCall.callerName || incomingCall.meeting?.patient_name || 'Patient'} has initiated an instant video meeting. Connect now to begin clinical motor review.
             </p>
 
             <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
@@ -2641,9 +2924,9 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                   setSelectedMeeting(incomingCall.meeting || {
                     title: incomingCall.meetingTitle || 'Clinical Telehealth Video Meeting',
                     scheduled_time: 'Now (Immediate Telehealth)',
-                    room_id: incomingCall.roomId || 'remotion-room-pt_1',
-                    patient_id: 'pt_1',
-                    patient_name: incomingCall.callerName || 'Asha Sharma'
+                    room_id: incomingCall.roomId || `remotion-room-${incomingCall.callerPatientId || 'pt_1'}`,
+                    patient_id: incomingCall.meeting?.patient_id || incomingCall.callerPatientId || 'pt_1',
+                    patient_name: incomingCall.callerName || incomingCall.meeting?.patient_name || 'Patient'
                   });
                   setIncomingCall(null);
                 }}

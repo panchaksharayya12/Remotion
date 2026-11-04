@@ -7,6 +7,7 @@ import TherapistPortal from './portals/TherapistPortal';
 import AdminPortal from './portals/AdminPortal';
 import GamingPortal from './portals/GamingPortal';
 import HeadsetModal from './components/HeadsetModal';
+import ErrorBoundary from './components/ErrorBoundary';
 import { api } from './services/api';
 import { ShieldCheck, Eye, ArrowLeft, LogOut } from 'lucide-react';
 
@@ -168,34 +169,36 @@ export default function App() {
 
       {/* Main Portal View Routing */}
       <main className="flex-1 w-full">
-        {currentPortal === 'patient' && (
-          <PatientPortal
-            currentUser={currentUser}
-            onNavigateGaming={() => setCurrentPortal('explorer')}
-          />
-        )}
+        <ErrorBoundary onReset={() => setCurrentPortal(currentUser?.role || 'therapist')}>
+          {currentPortal === 'patient' && (
+            <PatientPortal
+              currentUser={currentUser}
+              onNavigateGaming={() => setCurrentPortal('explorer')}
+            />
+          )}
 
-        {currentPortal === 'therapist' && (
-          <TherapistPortal
-            currentUser={currentUser}
-            onOpenHeadsetModal={() => setIsHeadsetOpen(true)}
-          />
-        )}
+          {currentPortal === 'therapist' && (
+            <TherapistPortal
+              currentUser={currentUser}
+              onOpenHeadsetModal={() => setIsHeadsetOpen(true)}
+            />
+          )}
 
-        {currentPortal === 'admin' && (
-          <AdminPortal
-            onPreviewPortal={(portal) => {
-              setPreviewMode(portal);
-              setCurrentPortal(portal);
-            }}
-          />
-        )}
+          {currentPortal === 'admin' && (
+            <AdminPortal
+              onPreviewPortal={(portal) => {
+                setPreviewMode(portal);
+                setCurrentPortal(portal);
+              }}
+            />
+          )}
 
-        {(currentPortal === 'explorer' || currentPortal === 'gaming') && (
-          <GamingPortal
-            onOpenHeadsetModal={() => setIsHeadsetOpen(true)}
-          />
-        )}
+          {(currentPortal === 'explorer' || currentPortal === 'gaming') && (
+            <GamingPortal
+              onOpenHeadsetModal={() => setIsHeadsetOpen(true)}
+            />
+          )}
+        </ErrorBoundary>
       </main>
 
       {/* Permanent Academic Disclaimer Footer across all authenticated portals */}

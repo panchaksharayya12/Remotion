@@ -875,16 +875,77 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    const patient = PATIENTS.find(p => p.id === ptId) || PATIENTS[0];
+    let patient = PATIENTS.find(p => p.id === ptId);
+    if (!patient) {
+      if (ptId === 'pt_1') {
+        patient = PATIENTS[0];
+      } else {
+        patient = {
+          id: ptId,
+          user_id: 'u_' + ptId,
+          name: 'Patient ' + ptId.replace('pt_', ''),
+          age: 52,
+          gender: 'Not Specified',
+          condition: 'Post-Stroke Left Upper Limb Hemiparesis',
+          recovery_level: 'Stage 3 Recovery',
+          affected_side: 'Left Upper Limb',
+          primary_language: 'en',
+          emergency_contact: '+91 98450 12345',
+          total_sessions: 1,
+          avg_accuracy: 92.0,
+          peak_rom: 62.0,
+          level: 3,
+          streak: 1,
+          compliance: '100%',
+          active_prescriptions_count: 2,
+          notes: 'Clinical record initialized.'
+        };
+        PATIENTS.unshift(patient);
+      }
+    }
+
+    let prescriptions = PRESCRIPTIONS.filter(p => p.patient_id === patient.id);
+    if (prescriptions.length === 0) {
+      prescriptions = [
+        {
+          id: 'rx_' + patient.id + '_sq',
+          patient_id: patient.id,
+          patient_name: patient.name,
+          exercise_id: 'ex_squeeze_fill',
+          exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+          target_reps: 15,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: `Active finger flexion routine customized for ${patient.name}.`,
+          clinical_notes: `Prescribed based on condition: ${patient.condition}.`,
+          status: 'active',
+          created_at: new Date().toISOString()
+        },
+        {
+          id: 'rx_' + patient.id + '_reach',
+          patient_id: patient.id,
+          patient_name: patient.name,
+          exercise_id: 'ex_reach_touch',
+          exercise_name: 'Reach & Touch (3D Spatial Coordination)',
+          target_reps: 20,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: 'Spatial reaching targets to rebuild functional shoulder and elbow extension.',
+          clinical_notes: 'Assess movement latency and trunk compensation.',
+          status: 'active',
+          created_at: new Date().toISOString()
+        }
+      ];
+      PRESCRIPTIONS.unshift(...prescriptions);
+    }
+
     return res.status(200).json({
       patient,
-      prescriptions: PRESCRIPTIONS.filter(p => p.patient_id === patient.id),
+      prescriptions,
       recovery_metrics: [
-        { session: 'Baseline', rom: 45, accuracy: 72 },
-        { session: 'Week 1', rom: 58, accuracy: 80 },
-        { session: 'Week 2', rom: 68, accuracy: 86 },
-        { session: 'Week 3', rom: 76, accuracy: 91 },
-        { session: 'Current', rom: patient.peak_rom || 82, accuracy: patient.avg_accuracy || 94 }
+        { session: 'Baseline', rom: 42, accuracy: 72 },
+        { session: 'Session 1', rom: 55, accuracy: 82 },
+        { session: 'Current', rom: patient.peak_rom || 62, accuracy: patient.avg_accuracy || 92 }
       ]
     });
   }
