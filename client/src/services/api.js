@@ -610,6 +610,25 @@ class ApiService {
       return { success: false, signals: [] };
     }
   }
+
+  async sendCallAlert(alertData) {
+    try {
+      return await this.request('/telehealth/call-alert', {
+        method: 'POST',
+        body: JSON.stringify(alertData)
+      });
+    } catch (e) {
+      return { success: false };
+    }
+  }
+
+  async getCallAlerts(targetRole, since = 0) {
+    try {
+      return await this.request(`/telehealth/call-alert?targetRole=${encodeURIComponent(targetRole)}&since=${since}`);
+    } catch (e) {
+      return { success: false, alerts: [] };
+    }
+  }
 }
 
 export const api = new ApiService();

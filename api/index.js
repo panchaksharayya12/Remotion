@@ -201,6 +201,7 @@ let CLINICAL_MEETINGS = [
 ];
 
 let WEBRTC_SIGNALS = [];
+let ACTIVE_CALL_ALERTS = [];
 
 export default async function handler(req, res) {
   // Enable CORS
@@ -373,19 +374,18 @@ export default async function handler(req, res) {
   // WebRTC Multi-Tier Signaling Bridge
   if (pathname === '/webrtc/signal' || pathname.startsWith('/webrtc/signal')) {
     if (req.method === 'POST') {
-      const { roomId = 'remotion-room-pt_1', senderId = 'peer', type = 'ping', data = null, userName = '', role = '' } = body;
       const signalEntry = {
         id: 'sig_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
-        roomId,
-        senderId,
-        type,
-        data,
-        userName,
-        role,
+        ...body,
+        roomId: body.roomId || 'remotion-room-pt_1',
+        senderId: body.senderId || 'peer',
+        type: body.type || 'ping',
+        userName: body.userName || '',
+        role: body.role || '',
         timestamp: Date.now()
       };
       WEBRTC_SIGNALS.push(signalEntry);
-      if (WEBRTC_SIGNALS.length > 250) WEBRTC_SIGNALS.shift();
+      if (WEBRTC_SIGNALS.length > 300) WEBRTC_SIGNALS.shift();
       return res.status(200).json({ success: true, signal: signalEntry });
     }
     // GET: Query signals for this room
@@ -396,6 +396,26 @@ export default async function handler(req, res) {
       s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp > since
     );
     return res.status(200).json({ success: true, signals: matched });
+  }
+
+  // Real-Time Telehealth Call Alerts (rings on recipient portal immediately)
+  if (pathname === '/telehealth/call-alert' || pathname.startsWith('/telehealth/call-alert')) {
+    if (req.method === 'POST') {
+      const alertData = {
+        id: 'alert_' + Date.now().toString(36),
+        ...body,
+        timestamp: Date.now()
+      };
+      ACTIVE_CALL_ALERTS = ACTIVE_CALL_ALERTS.filter(a => Date.now() - a.timestamp < 60000);
+      ACTIVE_CALL_ALERTS.push(alertData);
+      return res.status(200).json({ success: true, alert: alertData });
+    }
+    const targetRole = url.searchParams.get('targetRole') || '';
+    const since = parseInt(url.searchParams.get('since') || '0', 10);
+    const pendingAlerts = ACTIVE_CALL_ALERTS.filter(
+      a => (!targetRole || a.targetRole === targetRole) && a.timestamp > since
+    );
+    return res.status(200).json({ success: true, alerts: pendingAlerts });
   }
 
   // 5. Therapist Patients Caseload

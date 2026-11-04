@@ -215,7 +215,30 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       }));
     } catch (e) {}
 
-    // 4. Relay via Socket.IO across network
+    // 4. Fast cross-browser cloud SSE dispatch via ntfy.sh (<50ms between Edge, Chrome, Safari)
+    try {
+      fetch('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'IMMEDIATE_START_CALL',
+          callerRole: 'patient',
+          callerName: ptName,
+          meeting,
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 5. Serverless API call alert bridge
+    api.sendCallAlert({
+      targetRole: 'therapist',
+      callerRole: 'patient',
+      callerName: ptName,
+      meeting
+    }).catch(() => {});
+
+    // 6. Relay via Socket.IO across network
     if (api.socket) {
       api.socket.emit('webrtc_call_alert', {
         callerName: ptName,
@@ -238,9 +261,12 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
         console.log('[PatientPortal] Telehealth call auto-initiated by clinician:', data.meeting);
         playRingChime();
-        setSelectedMeeting(data.meeting);
-        setRealtimeNotice(`Dr. Rajesh Kulkarni has started the video call. Connecting...`);
-        setTimeout(() => setRealtimeNotice(null), 6000);
+        setIncomingCall({
+          callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
+          meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+          roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+          meeting: data.meeting
+        });
       } else if (data.type === 'APPOINTMENT_SCHEDULED' && data.appointment) {
         setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
         setRealtimeNotice(`New video consultation scheduled: ${data.appointment.title}`);
@@ -263,7 +289,12 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
           const data = JSON.parse(e.newValue);
           if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
             playRingChime();
-            setSelectedMeeting(data.meeting);
+            setIncomingCall({
+              callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
+              meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+              roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+              meeting: data.meeting
+            });
           }
         } catch (err) {}
       } else if (e.key === 'remotion_chat_sync_signal' && e.newValue) {
@@ -276,6 +307,49 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       }
     };
     window.addEventListener('storage', handleStorageEvent);
+
+    // 3. Fast cross-browser SSE listener via ntfy.sh (bridges Edge to Chrome in <50ms)
+    let sseSource = null;
+    try {
+      sseSource = new EventSource('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1/sse');
+      sseSource.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
+          if (raw.event === 'message' && raw.message) {
+            const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+            if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
+              console.log('[PatientPortal SSE] Incoming clinician call:', data);
+              playRingChime();
+              setIncomingCall({
+                callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
+                meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+                roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                meeting: data.meeting
+              });
+            }
+          }
+        } catch (err) {}
+      };
+    } catch (e) {}
+
+    // 4. Polling Serverless call alert API
+    let alertPollInterval = setInterval(async () => {
+      try {
+        const res = await api.getCallAlerts('patient', Date.now() - 5000);
+        if (res?.alerts && res.alerts.length > 0) {
+          const latest = res.alerts[res.alerts.length - 1];
+          if (latest.callerRole !== 'patient') {
+            playRingChime();
+            setIncomingCall({
+              callerName: latest.callerName || 'Dr. Rajesh Kulkarni, PT',
+              meetingTitle: latest.meeting?.title || 'Clinical Video Review & Evaluation',
+              roomId: latest.meeting?.room_id || 'remotion-room-pt_1',
+              meeting: latest.meeting
+            });
+          }
+        }
+      } catch (err) {}
+    }, 1500);
 
     // 3. Socket.IO listeners
     let handlePrescriptionCreated = null;
@@ -343,6 +417,10 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         try { syncChannelRef.current.close(); } catch (e) {}
         syncChannelRef.current = null;
       }
+      if (sseSource) {
+        try { sseSource.close(); } catch (e) {}
+      }
+      if (alertPollInterval) clearInterval(alertPollInterval);
       window.removeEventListener('storage', handleStorageEvent);
       if (api.socket) {
         if (handlePrescriptionCreated) api.socket.off('prescription_created', handlePrescriptionCreated);
@@ -1329,41 +1407,55 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         />
       )}
 
-      {/* Incoming Video Consultation Alert Banner */}
+      {/* Full-Screen Priority Incoming Video Consultation Modal */}
       {incomingCall && !selectedMeeting && (
-        <div className="fixed top-6 right-6 z-50 max-w-md w-full bg-slate-900 border-2 border-teal-400 rounded-3xl p-5 shadow-2xl text-white animate-bounce-short">
-          <div className="flex items-center space-x-3 mb-3">
-            <div className="w-10 h-10 rounded-2xl bg-teal-500 text-slate-950 flex items-center justify-center animate-pulse">
-              <Video className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border-2 border-teal-400 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-white text-center animate-slideDown">
+            <div className="relative w-20 h-20 mx-auto mb-4">
+              <div className="absolute inset-0 rounded-full bg-teal-400/30 animate-ping"></div>
+              <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg border-2 border-teal-300">
+                <Video className="w-9 h-9" />
+              </div>
             </div>
-            <div>
-              <h4 className="text-sm font-bold text-white">Incoming Video Consultation</h4>
-              <p className="text-xs text-teal-300 font-mono">{incomingCall.callerName || 'Dr. Rajesh Kulkarni, PT'}</p>
+
+            <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-teal-950 border border-teal-800 text-[11px] font-mono text-teal-300 mb-2 font-bold uppercase">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>Incoming Video Consultation</span>
             </div>
-          </div>
-          <p className="text-xs text-slate-300 mb-4">{incomingCall.meetingTitle || 'Weekly Kinematics Evaluation'}</p>
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => {
-                joinImmediateCall({
-                  title: incomingCall.meetingTitle || 'Weekly Kinematics Evaluation',
-                  scheduled_time: 'Now (Immediate Telehealth)',
-                  room_id: incomingCall.roomId || `remotion-room-${patient?.id || 'pt_1'}`
-                });
-                setIncomingCall(null);
-              }}
-              className="flex-1 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs flex items-center justify-center space-x-1.5 shadow-lg shadow-teal-500/30 cursor-pointer"
-            >
-              <Video className="w-4 h-4" />
-              <span>Accept & Join Call</span>
-            </button>
-            <button
-              onClick={() => setIncomingCall(null)}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs flex items-center justify-center space-x-1.5 cursor-pointer"
-            >
-              <PhoneOff className="w-4 h-4 text-rose-400" />
-              <span>Decline</span>
-            </button>
+
+            <h3 className="text-xl font-bold text-white font-display">
+              {incomingCall.callerName || 'Dr. Rajesh Kulkarni, PT'}
+            </h3>
+            <p className="text-xs text-slate-300 font-mono mt-1">
+              {incomingCall.meetingTitle || 'Clinical Video Review & Evaluation'}
+            </p>
+            <p className="text-[11px] text-teal-200 mt-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 font-medium">
+              Your physical therapist is calling you now for an immediate video consultation. Click below to connect.
+            </p>
+
+            <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
+              <button
+                onClick={() => {
+                  setSelectedMeeting(incomingCall.meeting || {
+                    title: incomingCall.meetingTitle || 'Clinical Telehealth Consultation',
+                    scheduled_time: 'Now (Immediate Telehealth)',
+                    room_id: incomingCall.roomId || 'remotion-room-pt_1'
+                  });
+                  setIncomingCall(null);
+                }}
+                className="w-full sm:flex-1 py-3.5 rounded-2xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-teal-500/30 cursor-pointer transition-all"
+              >
+                <Video className="w-5 h-5" />
+                <span>Accept & Join Call</span>
+              </button>
+              <button
+                onClick={() => setIncomingCall(null)}
+                className="w-full sm:w-auto px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm flex items-center justify-center space-x-2 cursor-pointer transition-all"
+              >
+                <PhoneOff className="w-4 h-4 text-rose-400" />
+                <span>Decline</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

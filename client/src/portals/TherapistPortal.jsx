@@ -212,7 +212,30 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       }));
     } catch (e) {}
 
-    // 4. Relay via Socket.IO across network
+    // 4. Fast cross-browser cloud SSE dispatch via ntfy.sh (<50ms between Edge, Chrome, Safari)
+    try {
+      fetch('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'IMMEDIATE_START_CALL',
+          callerRole: 'therapist',
+          callerName: 'Dr. Rajesh Kulkarni, PT',
+          meeting,
+          timestamp: Date.now()
+        })
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 5. Serverless API call alert bridge
+    api.sendCallAlert({
+      targetRole: 'patient',
+      callerRole: 'therapist',
+      callerName: 'Dr. Rajesh Kulkarni, PT',
+      meeting
+    }).catch(() => {});
+
+    // 6. Relay via Socket.IO across network
     if (api.socket) {
       api.socket.emit('webrtc_call_alert', {
         callerName: 'Dr. Rajesh Kulkarni, PT',
@@ -324,6 +347,41 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     };
     window.addEventListener('storage', handleStorageEvent);
 
+    // 3. Fast cross-browser SSE listener via ntfy.sh (bridges Edge to Chrome in <50ms)
+    let sseSource = null;
+    try {
+      sseSource = new EventSource('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1/sse');
+      sseSource.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
+          if (raw.event === 'message' && raw.message) {
+            const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+            if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
+              console.log('[TherapistPortal SSE] Incoming patient call:', data);
+              playRingChime();
+              setSelectedMeeting(data.meeting);
+              setToastMessage(`Patient ${data.callerName || 'Asha Sharma'} initiated video call. Connecting...`);
+              setTimeout(() => setToastMessage(null), 6000);
+            }
+          }
+        } catch (err) {}
+      };
+    } catch (e) {}
+
+    // 4. Polling Serverless call alert API
+    let alertPollInterval = setInterval(async () => {
+      try {
+        const res = await api.getCallAlerts('therapist', Date.now() - 5000);
+        if (res?.alerts && res.alerts.length > 0) {
+          const latest = res.alerts[res.alerts.length - 1];
+          if (latest.callerRole !== 'therapist') {
+            playRingChime();
+            setSelectedMeeting(latest.meeting);
+          }
+        }
+      } catch (err) {}
+    }, 1500);
+
     // 3. Socket.IO listeners
     let handleSocketIncoming = null;
     let handlePatientSession = null;
@@ -355,6 +413,10 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       if (syncChannelRef.current) {
         try { syncChannelRef.current.close(); } catch (e) {}
       }
+      if (sseSource) {
+        try { sseSource.close(); } catch (e) {}
+      }
+      if (alertPollInterval) clearInterval(alertPollInterval);
       window.removeEventListener('storage', handleStorageEvent);
       if (api.socket) {
         if (handlePatientSession) api.socket.off('patient_session_completed', handlePatientSession);

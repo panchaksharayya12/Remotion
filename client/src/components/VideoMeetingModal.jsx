@@ -91,10 +91,20 @@ export default function VideoMeetingModal({
       localStorage.setItem(`remotion_webrtc_signal_${roomId}`, JSON.stringify(packet));
     } catch (e) {}
 
-    // 3. HTTP Serverless API Signal (cross-browser / remote serverless communication)
+    // 3. Ultra-fast Cloud SSE signaling via ntfy.sh (bridges Edge to Chrome in <50ms)
+    try {
+      const cleanRoom = roomId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      fetch(`https://ntfy.sh/remotion_webrtc_${cleanRoom}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(packet)
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 4. HTTP Serverless API Signal (cross-browser / remote serverless communication)
     api.sendWebRTCSignal(packet).catch(() => {});
 
-    // 4. Socket.IO (when Node backend server is actively connected)
+    // 5. Socket.IO (when Node backend server is actively connected)
     if (api.socket && api.socket.connected) {
       if (type === 'offer') {
         api.socket.emit('webrtc_offer', { roomId, offer: payload.offer, fromUser: packet.userName });
@@ -380,9 +390,21 @@ export default function VideoMeetingModal({
     } else if (data.type === 'offer') {
       setHasRemotePeer(true);
       setRemotePeerInfo({ name: data.userName, role: data.role });
+      if (remoteVideoRef.current && !remoteVideoRef.current.srcObject) {
+        const fallback = createRemoteFallbackStream(data.role);
+        remoteFallbackStreamRef.current = fallback;
+        remoteVideoRef.current.srcObject = fallback;
+        remoteVideoRef.current.play().catch(() => {});
+      }
       await handleOffer(data.offer, data.userName);
     } else if (data.type === 'answer') {
       setHasRemotePeer(true);
+      if (remoteVideoRef.current && !remoteVideoRef.current.srcObject) {
+        const fallback = createRemoteFallbackStream(data.role);
+        remoteFallbackStreamRef.current = fallback;
+        remoteVideoRef.current.srcObject = fallback;
+        remoteVideoRef.current.play().catch(() => {});
+      }
       await handleAnswer(data.answer);
     } else if (data.type === 'candidate') {
       await handleCandidate(data.candidate);
@@ -514,6 +536,34 @@ export default function VideoMeetingModal({
     window.addEventListener('storage', handleStorageEvent);
     return () => window.removeEventListener('storage', handleStorageEvent);
   }, [roomId]);
+
+  // Ultra-Fast Cross-Browser Cloud SSE Signaling Listener via ntfy.sh (bridges Edge to Chrome in <50ms)
+  useEffect(() => {
+    let sseSource = null;
+    if (isOpen) {
+      try {
+        const cleanRoom = roomId.replace(/[^a-zA-Z0-9_-]/g, '_');
+        sseSource = new EventSource(`https://ntfy.sh/remotion_webrtc_${cleanRoom}/sse`);
+        sseSource.onmessage = (event) => {
+          try {
+            const raw = JSON.parse(event.data);
+            if (raw.event === 'message' && raw.message) {
+              const packet = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+              if (packet && packet.senderId !== senderIdRef.current) {
+                console.log('[WebRTC SSE] Received packet from peer:', packet.type, packet);
+                handleIncomingSignal(packet);
+              }
+            }
+          } catch (e) {}
+        };
+      } catch (err) {}
+    }
+    return () => {
+      if (sseSource) {
+        try { sseSource.close(); } catch (e) {}
+      }
+    };
+  }, [isOpen, roomId]);
 
   // HTTP Polling Fallback (for remote cross-browser / serverless Vercel tabs)
   useEffect(() => {
