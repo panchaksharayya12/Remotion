@@ -56,7 +56,7 @@ const DEMO_USERS = {
   }
 };
 
-const PATIENTS = [
+let PATIENTS = [
   {
     id: 'pt_1',
     user_id: 'u_patient_1',
@@ -69,6 +69,8 @@ const PATIENTS = [
     xp: 480,
     streak: 7,
     level: 4,
+    compliance: '94%',
+    last_session: 'Today at 10:15 AM',
     primary_language: 'hi',
     total_sessions: 6,
     avg_accuracy: 94.2,
@@ -87,6 +89,8 @@ const PATIENTS = [
     xp: 240,
     streak: 3,
     level: 2,
+    compliance: '88%',
+    last_session: 'Yesterday',
     primary_language: 'en',
     total_sessions: 3,
     avg_accuracy: 88.0,
@@ -105,6 +109,8 @@ const PATIENTS = [
     xp: 820,
     streak: 14,
     level: 6,
+    compliance: '98%',
+    last_session: 'Today at 08:30 AM',
     primary_language: 'kn',
     total_sessions: 14,
     avg_accuracy: 96.5,
@@ -113,7 +119,7 @@ const PATIENTS = [
   }
 ];
 
-const PRESCRIPTIONS = [
+let PRESCRIPTIONS = [
   {
     id: 'rec_1',
     patient_id: 'pt_1',
@@ -263,6 +269,78 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
+  // 1b. Auth: Registration (Dynamic enrollment into Clinical Caseload)
+  if (pathname === '/auth/register' && req.method === 'POST') {
+    const { name, email, password, role = 'patient', condition = 'Post-Stroke Motor Rehabilitation', phone } = body;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanName = (name || 'New Patient').trim();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return res.status(400).json({ error: 'Valid email address required' });
+    }
+
+    const newUserId = 'u_' + Date.now().toString(36);
+    const newPtId = 'pt_' + Date.now().toString(36);
+
+    const newUser = {
+      id: newUserId,
+      email: cleanEmail,
+      role: role || 'patient',
+      name: cleanName,
+      avatar: cleanName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'PT',
+      phone: phone || '+91 98450 00000',
+      profile: {
+        id: newPtId,
+        user_id: newUserId,
+        name: cleanName,
+        age: 48,
+        gender: 'Patient',
+        condition: condition || 'Upper-Limb Motor Rehabilitation',
+        recovery_level: 'Initial Evaluation (Stage 1)',
+        affected_side: 'Right',
+        xp: 150,
+        streak: 1,
+        level: 1,
+        compliance: '100%',
+        last_session: 'Today, Just Enrolled',
+        primary_language: 'en',
+        total_sessions: 1,
+        avg_accuracy: 92.0,
+        peak_rom: 55.0,
+        active_prescriptions_count: 1
+      }
+    };
+
+    DEMO_USERS[cleanEmail] = newUser;
+
+    // If role is patient, register into Therapist Caseload Registry
+    if (role === 'patient') {
+      const existingIdx = PATIENTS.findIndex(p => p.email === cleanEmail);
+      if (existingIdx >= 0) {
+        PATIENTS[existingIdx] = { ...PATIENTS[existingIdx], ...newUser.profile };
+      } else {
+        PATIENTS.unshift(newUser.profile);
+      }
+
+      // Automatically assign initial tailored prescription
+      PRESCRIPTIONS.unshift({
+        id: 'rec_' + Date.now().toString(36),
+        patient_id: newPtId,
+        exercise_id: 'ex_squeeze_fill',
+        exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+        target_reps: 15,
+        frequency: 'Daily',
+        difficulty: 'Easy',
+        instructions: `Welcome ${cleanName}. Perform active finger squeeze and release for ${condition}.`,
+        clinical_notes: 'Initial clinical motor baseline assigned upon enrollment.',
+        status: 'active'
+      });
+    }
+
+    const token = 'remotion_tok_' + Buffer.from(cleanEmail).toString('base64');
+    return res.status(200).json({ success: true, token, user: newUser });
+  }
+
   // 2. Auth: Demo Switch
   if (pathname === '/auth/demo-switch' && req.method === 'POST') {
     const role = body.role || 'patient';
@@ -281,18 +359,21 @@ export default async function handler(req, res) {
 
   // 4. Patient Dashboard
   if (pathname === '/patient/dashboard') {
-    const patient = DEMO_USERS['patient@remotion.health'].profile;
+    const ptIdQuery = url.searchParams.get('patient_id') || 'pt_1';
+    const targetPt = PATIENTS.find(p => p.id === ptIdQuery || p.user_id === ptIdQuery) || PATIENTS[0];
+    const patientPrescriptions = PRESCRIPTIONS.filter(
+      p => (p.patient_id === targetPt.id || p.patient_id === 'pt_1') && p.status !== 'inactive'
+    );
     return res.status(200).json({
       patient: {
-        ...patient,
-        name: 'Asha Sharma',
+        ...targetPt,
         therapist_name: 'Dr. Rajesh Kulkarni, PT'
       },
-      prescriptions: PRESCRIPTIONS,
+      prescriptions: patientPrescriptions,
       stats: {
-        total_sessions: 6,
-        avg_accuracy: 94,
-        avg_rom: 82,
+        total_sessions: targetPt.total_sessions || 6,
+        avg_accuracy: targetPt.avg_accuracy || 94,
+        avg_rom: targetPt.peak_rom || 82,
         avg_reaction_time: 340,
         avg_grip_strength: 88
       },
@@ -363,14 +444,24 @@ export default async function handler(req, res) {
       const isDoctor = req.headers.authorization && req.headers.authorization.includes('therapist');
       const sender_id = customSenderId || (isDoctor ? 'u_therapist_1' : 'u_patient_1');
       const sender_name = customSenderName || (sender_id === 'u_therapist_1' ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma');
+
+      // Server deduplication: check if exact message was received within 5 seconds
+      const existing = CLINICAL_MESSAGES.find(
+        m => (body.id && m.id === body.id) ||
+             (m.sender_id === sender_id && m.message_text === message_text && (Date.now() - new Date(m.created_at).getTime() < 5000))
+      );
+      if (existing) {
+        return res.status(200).json({ success: true, message: existing, messages: CLINICAL_MESSAGES });
+      }
+
       const newMsg = {
-        id: 'msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6),
+        id: body.id || ('msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6)),
         sender_id,
         sender_name,
         receiver_id,
         message_text,
         translated_text: customTranslation || message_text,
-        created_at: new Date().toISOString()
+        created_at: body.created_at || new Date().toISOString()
       };
       CLINICAL_MESSAGES.push(newMsg);
       if (CLINICAL_MESSAGES.length > 300) CLINICAL_MESSAGES.shift();
@@ -482,9 +573,59 @@ export default async function handler(req, res) {
     });
   }
 
-  // 9. Prescriptions
-  if (pathname.startsWith('/therapist/prescriptions')) {
-    return res.status(200).json({ success: true, message: 'Prescription updated' });
+  // 9. Prescriptions Management
+  if (pathname === '/therapist/prescriptions' || pathname.startsWith('/therapist/prescriptions')) {
+    if (req.method === 'POST') {
+      const {
+        patient_id = 'pt_1',
+        exercise_id = 'ex_squeeze_fill',
+        exercise_name,
+        target_reps = 15,
+        frequency = 'Daily',
+        difficulty = 'Moderate',
+        instructions = '',
+        clinical_notes = ''
+      } = body;
+      const targetPt = PATIENTS.find(p => p.id === patient_id) || PATIENTS[0];
+      const newRec = {
+        id: 'rec_' + Date.now().toString(36),
+        patient_id: targetPt.id,
+        exercise_id,
+        exercise_name: exercise_name || (exercise_id === 'ex_squeeze_fill' ? 'Squeeze & Fill (Hand Grasp & ROM)' :
+                                          exercise_id === 'ex_reach_touch' ? 'Reach & Touch (3D Spatial Coordination)' : 'Hand Function Check'),
+        target_reps: Number(target_reps) || 15,
+        frequency: frequency || 'Daily',
+        difficulty: difficulty || 'Moderate',
+        instructions: instructions || 'Follow clinical guidance.',
+        clinical_notes: clinical_notes || `Prescribed for ${targetPt.name} based on condition: ${targetPt.condition}.`,
+        status: 'active',
+        created_at: new Date().toISOString()
+      };
+      PRESCRIPTIONS.unshift(newRec);
+      if (targetPt) targetPt.active_prescriptions_count = (targetPt.active_prescriptions_count || 0) + 1;
+      return res.status(200).json({ success: true, prescription: newRec, prescriptions: PRESCRIPTIONS });
+    }
+
+    if (req.method === 'PUT' || req.method === 'PATCH') {
+      const recId = pathname.split('/').pop();
+      const rec = PRESCRIPTIONS.find(p => p.id === recId);
+      if (rec) {
+        if (body.status) rec.status = body.status;
+        if (body.target_reps) rec.target_reps = Number(body.target_reps);
+        if (body.frequency) rec.frequency = body.frequency;
+      }
+      return res.status(200).json({ success: true, prescription: rec, prescriptions: PRESCRIPTIONS });
+    }
+
+    if (req.method === 'DELETE') {
+      const recId = pathname.split('/').pop();
+      PRESCRIPTIONS = PRESCRIPTIONS.filter(p => p.id !== recId);
+      return res.status(200).json({ success: true, prescriptions: PRESCRIPTIONS });
+    }
+
+    const patientId = url.searchParams.get('patient_id');
+    const filtered = patientId ? PRESCRIPTIONS.filter(p => p.patient_id === patientId) : PRESCRIPTIONS;
+    return res.status(200).json({ prescriptions: filtered });
   }
 
   // 10. Neural Translation

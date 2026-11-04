@@ -72,9 +72,11 @@ export default function RemoAssistant({ isExerciseActive = false, userRole = 'pa
       recognition.onerror = () => setIsListening(false);
 
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        setInputText(transcript);
-        handleSend(transcript);
+        const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+        if (transcript) {
+          setInputText(transcript);
+          handleSend(transcript);
+        }
       };
 
       recognition.start();
@@ -86,7 +88,7 @@ export default function RemoAssistant({ isExerciseActive = false, userRole = 'pa
 
   // Text-to-Speech (Web Speech API)
   const speakText = (text) => {
-    if (!isSpeakingEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
+    if (!isSpeakingEnabled || typeof window === 'undefined' || !window.speechSynthesis || !text) return;
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
@@ -99,17 +101,24 @@ export default function RemoAssistant({ isExerciseActive = false, userRole = 'pa
   };
 
   const handleSend = async (customText = null) => {
-    const textToSend = customText || inputText;
-    if (!textToSend.trim()) return;
+    const textToSend = (customText || inputText || '').trim();
+    if (!textToSend) return;
 
-    const userMsg = {
-      id: Date.now().toString(),
-      sender: 'user',
-      text: textToSend,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
+    // Prevent duplicate consecutive user message submission
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last && last.sender === 'user' && last.text === textToSend) {
+        return prev;
+      }
+      const userMsg = {
+        id: 'usr_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5),
+        sender: 'user',
+        text: textToSend,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      return [...prev.filter(m => m.text?.trim()), userMsg];
+    });
 
-    setMessages(prev => [...prev, userMsg]);
     setInputText('');
     setIsTyping(true);
     setMascotState('thinking');
@@ -118,26 +127,26 @@ export default function RemoAssistant({ isExerciseActive = false, userRole = 'pa
       const response = await api.askRemo(textToSend, currentLang);
       setIsTyping(false);
 
-      const botMsg = {
-        id: (Date.now() + 1).toString(),
-        sender: 'remo',
-        text: response.reply,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
+      if (response && response.reply && response.reply.trim()) {
+        const botMsg = {
+          id: 'bot_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5),
+          sender: 'remo',
+          text: response.reply.trim(),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
 
-      setMessages(prev => [...prev, botMsg]);
-      setMascotState(response.mascotState || 'encouraging');
-      speakText(response.reply);
-
-      // Revert to idle after 6 seconds
+        setMessages(prev => [...prev.filter(m => m.text?.trim()), botMsg]);
+        setMascotState(response.mascotState || 'encouraging');
+        speakText(response.reply);
+      }
       setTimeout(() => setMascotState('idle'), 6000);
     } catch (err) {
       setIsTyping(false);
       setMascotState('concerned');
       setMessages(prev => [
-        ...prev,
+        ...prev.filter(m => m.text?.trim()),
         {
-          id: (Date.now() + 1).toString(),
+          id: 'bot_err_' + Date.now(),
           sender: 'remo',
           text: 'I am here to support your therapy. Please make sure your hand is visible to the camera for optimal tracking.',
           timestamp: 'Just now'
@@ -279,7 +288,7 @@ export default function RemoAssistant({ isExerciseActive = false, userRole = 'pa
 
           {/* Chat Messages Body */}
           <div className="p-4 overflow-y-auto max-h-80 min-h-[220px] space-y-3 text-xs">
-            {messages.map((m) => (
+            {messages.filter(m => m.text && m.text.trim()).map((m) => (
               <div
                 key={m.id}
                 className={`flex flex-col ${m.sender === 'user' ? 'items-end' : 'items-start'}`}

@@ -38,6 +38,28 @@ export default function RegisterPage({ onAuthSuccess, onNavigateLogin }) {
         phone: phone.trim() || '+91 98450 00000',
         condition
       });
+
+      // Synchronize with Therapist portal immediately
+      try {
+        const bc = new BroadcastChannel('remotion_telehealth_sync');
+        bc.postMessage({
+          type: 'NEW_PATIENT_REGISTERED',
+          user: res.user,
+          patient: res.patient,
+          timestamp: Date.now()
+        });
+        bc.close();
+      } catch (e) {}
+
+      try {
+        localStorage.setItem('remotion_patient_registered_signal', JSON.stringify({
+          type: 'NEW_PATIENT_REGISTERED',
+          user: res.user,
+          patient: res.patient,
+          timestamp: Date.now()
+        }));
+      } catch (e) {}
+
       setLoading(false);
       onAuthSuccess(res.user);
     } catch (err) {

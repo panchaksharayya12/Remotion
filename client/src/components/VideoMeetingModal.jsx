@@ -23,7 +23,7 @@ export default function VideoMeetingModal({
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
-  const [selectedLanguage, setSelectedLanguage] = useState('hi');
+  const [selectedLanguage, setSelectedLanguage] = useState('en');
   const [connectionStatus, setConnectionStatus] = useState('Direct Live Video Active');
   const [hasRemotePeer, setHasRemotePeer] = useState(false);
   const [remotePeerInfo, setRemotePeerInfo] = useState(null);
@@ -44,7 +44,6 @@ export default function VideoMeetingModal({
     {
       speaker: 'Dr. Rajesh Kulkarni',
       text: 'Hello Asha. Please observe how the elbow stabilizes while reaching the upper quadrants.',
-      translated: 'नमस्ते आशा। कृपया ध्यान दें कि ऊपरी चतुर्थांश तक पहुंचते समय कोहनी कैसे स्थिर होती है।',
       time: 'Just now'
     }
   ]);
@@ -795,23 +794,13 @@ export default function VideoMeetingModal({
           setLiveTranscript(transcript);
 
           if (event.results[event.results.length - 1].isFinal) {
-            let translated = transcript;
-            try {
-              const res = await api.translateText(transcript, 'en');
-              translated = res.translated_text || transcript;
-            } catch (e) {
-              if (selectedLanguage === 'hi') translated = `[Hindi]: ${transcript}`;
-              else if (selectedLanguage === 'kn') translated = `[Kannada]: ${transcript}`;
-            }
-
             const newCap = {
               speaker: myName,
               text: transcript,
-              translated,
               time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
 
-            setCaptions(prev => [...prev.slice(-4), newCap]);
+            setCaptions(prev => [...prev.slice(-3), newCap]);
             setLiveTranscript('');
             postSignal('caption', { caption: newCap });
           }
@@ -1063,28 +1052,21 @@ export default function VideoMeetingModal({
             </div>
           )}
 
-          {/* Live Multilingual Subtitles Overlay */}
+          {/* Live Subtitles Overlay - Clean without background as requested */}
           {captionsEnabled && (
-            <div className="absolute bottom-4 left-4 right-4 z-30 bg-slate-950/95 backdrop-blur-2xl border border-cyan-500/50 rounded-2xl p-3.5 shadow-2xl animate-slideUp max-w-3xl mx-auto">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-mono uppercase text-cyan-400 font-bold flex items-center space-x-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
-                  <span>Real-Time Speech-to-Text & Neural Translation</span>
-                </span>
-                <span className="text-[10px] font-mono text-slate-400">Target: English / Multi</span>
-              </div>
-
-              <div className="space-y-1 max-h-20 overflow-y-auto font-sans">
-                {captions.map((c, i) => (
-                  <div key={i} className="text-xs flex items-start space-x-2">
-                    <span className="font-bold text-cyan-300 shrink-0">{c.speaker}:</span>
-                    <span className="text-slate-300 italic font-mono text-[11px]">"{c.text}"</span>
-                    <span className="text-emerald-400 font-medium font-mono">[{c.translated}]</span>
+            <div className="absolute bottom-6 left-6 right-6 z-30 pointer-events-none flex flex-col items-center justify-end text-center">
+              <div className="space-y-1.5 max-w-2xl px-4 py-2">
+                {captions.slice(-2).map((c, i) => (
+                  <div
+                    key={i}
+                    className="text-sm sm:text-base font-semibold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)]"
+                  >
+                    <span className="text-cyan-300 font-bold mr-2">{c.speaker}:</span>
+                    <span>"{c.text}"</span>
                   </div>
                 ))}
                 {liveTranscript && (
-                  <div className="text-xs text-amber-300 animate-pulse flex items-center space-x-2">
-                    <span className="font-bold shrink-0">Speaking:</span>
+                  <div className="text-sm sm:text-base font-medium text-amber-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)] animate-pulse">
                     <span>{liveTranscript}...</span>
                   </div>
                 )}

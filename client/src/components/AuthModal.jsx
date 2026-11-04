@@ -72,39 +72,25 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
             <Shield className="w-6 h-6 text-slate-950" />
           </div>
           <h3 className="text-xl font-bold text-white font-display">
-            ReMotion Clinical Portal Access
+            ReMotion Portal Authentication
           </h3>
           <p className="text-xs text-slate-400 mt-1">
-            Role-based clinical authentication & demonstration accounts.
+            Choose your role to access the corresponding rehabilitation portal.
           </p>
         </div>
 
-        {/* 1-Click Demo Accounts Selector */}
+        {/* 4-Portal Role Selector */}
         <div className="mb-6 p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
           <div className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 mb-2 font-semibold flex items-center justify-between">
-            <span>Select Demo Persona (1-Click)</span>
+            <span>Select Portal Role:</span>
             <Sparkles className="w-3 h-3 text-cyan-400" />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => handleDemoSelect('patient')}
-              className={`p-2.5 rounded-xl border text-left text-xs font-medium transition-all ${
-                role === 'patient' ? 'bg-teal-950/60 text-teal-300 border-teal-500/50' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
-              }`}
-            >
-              <div className="font-bold flex items-center space-x-1.5">
-                <User className="w-3.5 h-3.5 text-teal-400" />
-                <span>Patient</span>
-              </div>
-              <div className="text-[10px] text-slate-400 font-mono mt-0.5">Asha Sharma</div>
-            </button>
-
-            <button
-              type="button"
               onClick={() => handleDemoSelect('therapist')}
               className={`p-2.5 rounded-xl border text-left text-xs font-medium transition-all ${
-                role === 'therapist' ? 'bg-blue-950/60 text-blue-300 border-blue-500/50' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                role === 'therapist' ? 'bg-blue-950/60 text-blue-300 border-blue-500/50 shadow-md' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
               }`}
             >
               <div className="font-bold flex items-center space-x-1.5">
@@ -116,9 +102,23 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
 
             <button
               type="button"
+              onClick={() => handleDemoSelect('patient')}
+              className={`p-2.5 rounded-xl border text-left text-xs font-medium transition-all ${
+                role === 'patient' ? 'bg-teal-950/60 text-teal-300 border-teal-500/50 shadow-md' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <div className="font-bold flex items-center space-x-1.5">
+                <User className="w-3.5 h-3.5 text-teal-400" />
+                <span>Patient</span>
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono mt-0.5">Asha Sharma</div>
+            </button>
+
+            <button
+              type="button"
               onClick={() => handleDemoSelect('admin')}
               className={`p-2.5 rounded-xl border text-left text-xs font-medium transition-all ${
-                role === 'admin' ? 'bg-purple-950/60 text-purple-300 border-purple-500/50' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                role === 'admin' ? 'bg-purple-950/60 text-purple-300 border-purple-500/50 shadow-md' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
               }`}
             >
               <div className="font-bold flex items-center space-x-1.5">
@@ -132,14 +132,14 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
               type="button"
               onClick={() => handleDemoSelect('guest')}
               className={`p-2.5 rounded-xl border text-left text-xs font-medium transition-all ${
-                role === 'guest' ? 'bg-amber-950/60 text-amber-300 border-amber-500/50' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                role === 'guest' ? 'bg-amber-950/60 text-amber-300 border-amber-500/50 shadow-md' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
               }`}
             >
               <div className="font-bold flex items-center space-x-1.5">
                 <Gamepad2 className="w-3.5 h-3.5 text-amber-400" />
-                <span>Experience User</span>
+                <span>Tech Explorer</span>
               </div>
-              <div className="text-[10px] text-slate-400 font-mono mt-0.5">Tech Explorer</div>
+              <div className="text-[10px] text-slate-400 font-mono mt-0.5">VR Simulator</div>
             </button>
           </div>
         </div>

@@ -16,6 +16,41 @@ import VideoMeetingModal from '../components/VideoMeetingModal';
 import RemoAssistant from '../components/RemoAssistant';
 import PlayableGameModal from './PlayableGameModal';
 import GameThumbnail from '../components/GameThumbnail';
+import ClinicalRecoveryBarChart from '../components/ClinicalRecoveryBarChart';
+
+// Robust Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
+const mergeAndDeduplicateMessages = (prevList, incoming) => {
+  const merged = [...(prevList || [])];
+  const items = Array.isArray(incoming) ? incoming : [incoming];
+
+  for (const item of items) {
+    if (!item || !item.message_text) continue;
+
+    // 1. Exact ID match
+    const idIdx = merged.findIndex(m => m.id === item.id);
+    if (idIdx !== -1) {
+      merged[idIdx] = { ...merged[idIdx], ...item };
+      continue;
+    }
+
+    // 2. Fuzzy match: same sender, same text, within 15 seconds
+    const fuzzyIdx = merged.findIndex(m => {
+      if (m.sender_id !== item.sender_id) return false;
+      if ((m.message_text || '').trim() !== (item.message_text || '').trim()) return false;
+      const t1 = new Date(m.created_at || 0).getTime();
+      const t2 = new Date(item.created_at || 0).getTime();
+      return Math.abs(t1 - t2) < 15000;
+    });
+
+    if (fuzzyIdx !== -1) {
+      merged[fuzzyIdx] = { ...merged[fuzzyIdx], ...item };
+    } else {
+      merged.push(item);
+    }
+  }
+
+  return merged.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+};
 
 const DEFAULT_APPOINTMENTS = [
   {
@@ -175,6 +210,45 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     }
   }, [activeTab, dashboardData?.therapist?.user_id]);
 
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+
+  // Voice Recording for Chat (English Speech-to-Text)
+  const toggleVoiceRecording = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Speech recognition is not supported in this browser.');
+      return;
+    }
+
+    if (isRecordingVoice) {
+      setIsRecordingVoice(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      recognition.onstart = () => setIsRecordingVoice(true);
+      recognition.onend = () => setIsRecordingVoice(false);
+      recognition.onerror = () => setIsRecordingVoice(false);
+
+      recognition.onresult = (event) => {
+        const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+        if (transcript) {
+          setChatInput(prev => (prev ? `${prev} ${transcript}` : transcript));
+        }
+      };
+
+      recognition.start();
+    } catch (err) {
+      console.warn('Speech recognition error:', err);
+      setIsRecordingVoice(false);
+    }
+  };
+
   // Auto-scroll to bottom of chat feed like WhatsApp
   useEffect(() => {
     if (activeTab === 'chat') {
@@ -200,7 +274,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     };
 
     // 1. Instant optimistic local UI update (0ms, WhatsApp feel)
-    setChatMessages(prev => [...prev.filter(m => m.id !== tempId), sentMsg]);
+    setChatMessages(prev => mergeAndDeduplicateMessages(prev, sentMsg));
     if (!textOverride) setChatInput('');
 
     // 2. Broadcast immediately across same-browser tabs (0ms)
@@ -235,9 +309,10 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       }).catch(() => {});
     } catch (e) {}
 
-    // 5. Persist to API
+    // 5. Persist to API with id passed to prevent duplicate insertion
     try {
       await api.sendMessage(therapistId, text, 'en', {
+        id: tempId,
         sender_id: 'u_patient_1',
         sender_name: 'Asha Sharma'
       });
@@ -356,20 +431,29 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       const data = event.data;
       if (!data) return;
       if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
-        console.log('[PatientPortal] Telehealth call auto-initiated by clinician:', data.meeting);
         playRingChime();
         setIncomingCall({
           callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
-          meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+          meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
           roomId: data.meeting?.room_id || 'remotion-room-pt_1',
           meeting: data.meeting
         });
       } else if (data.type === 'APPOINTMENT_SCHEDULED' && data.appointment) {
         setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
-        setRealtimeNotice(`New video consultation scheduled: ${data.appointment.title}`);
+        setRealtimeNotice(`New video meeting scheduled: ${data.appointment.title}`);
         setTimeout(() => setRealtimeNotice(null), 6000);
+      } else if (data.type === 'PRESCRIPTION_CREATED' && data.prescription) {
+        setRealtimeNotice(`New exercise prescribed: ${data.prescription.exercise_name || 'Rehabilitation Routine'}`);
+        setDashboardData(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            prescriptions: [data.prescription, ...(prev.prescriptions || []).filter(p => p.id !== data.prescription.id)]
+          };
+        });
+        setTimeout(() => setRealtimeNotice(null), 7000);
       } else if (data.type === 'CHAT_MESSAGE' && data.message) {
-        setChatMessages(prev => [...prev.filter(m => m.id !== data.message.id), data.message]);
+        setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
       }
     };
 
@@ -388,21 +472,32 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             playRingChime();
             setIncomingCall({
               callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
-              meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+              meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
               roomId: data.meeting?.room_id || 'remotion-room-pt_1',
               meeting: data.meeting
             });
+          }
+        } catch (err) {}
+      } else if (e.key === 'remotion_prescription_sync_signal' && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          if (data.type === 'PRESCRIPTION_CREATED' && data.prescription) {
+            setRealtimeNotice(`New exercise prescribed: ${data.prescription.exercise_name || 'Rehabilitation Routine'}`);
+            setDashboardData(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                prescriptions: [data.prescription, ...(prev.prescriptions || []).filter(p => p.id !== data.prescription.id)]
+              };
+            });
+            setTimeout(() => setRealtimeNotice(null), 7000);
           }
         } catch (err) {}
       } else if (e.key === 'remotion_chat_sync_signal' && e.newValue) {
         try {
           const data = JSON.parse(e.newValue);
           if (data.type === 'CHAT_MESSAGE' && data.message) {
-            setChatMessages(prev => {
-              if (prev.some(m => m.id === data.message.id)) return prev;
-              if (data.message.sender_id !== 'u_patient_1') playMessageTone();
-              return [...prev, data.message];
-            });
+            setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
           }
         } catch (err) {}
       }
@@ -416,11 +511,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         if (raw) {
           const data = JSON.parse(raw);
           if (data.type === 'CHAT_MESSAGE' && data.message) {
-            setChatMessages(prev => {
-              if (prev.some(m => m.id === data.message.id)) return prev;
-              if (data.message.sender_id !== 'u_patient_1') playMessageTone();
-              return [...prev, data.message];
-            });
+            setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
           }
         }
       } catch (e) {}
@@ -438,7 +529,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
               playRingChime();
               return {
                 callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
-                meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+                meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
                 roomId: data.meeting?.room_id || 'remotion-room-pt_1',
                 meeting: data.meeting
               };
@@ -461,7 +552,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
               playRingChime();
               setIncomingCall({
                 callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
-                meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+                meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
                 roomId: data.meeting?.room_id || 'remotion-room-pt_1',
                 meeting: data.meeting
               });
@@ -481,11 +572,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
           if (raw.event === 'message' && raw.message) {
             const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
             if (data.type === 'CHAT_MESSAGE' && data.message) {
-              setChatMessages(prev => {
-                if (prev.some(m => m.id === data.message.id)) return prev;
-                if (data.message.sender_id !== 'u_patient_1') playMessageTone();
-                return [...prev, data.message];
-              });
+              setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
             }
           }
         } catch (e) {}
@@ -505,11 +592,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             if (raw.event === 'message' && raw.message) {
               const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
               if (data.type === 'CHAT_MESSAGE' && data.message) {
-                setChatMessages(prev => {
-                  if (prev.some(m => m.id === data.message.id)) return prev;
-                  if (data.message.sender_id !== 'u_patient_1') playMessageTone();
-                  return [...prev, data.message];
-                });
+                setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
               }
             }
           } catch (e) {}
@@ -535,7 +618,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                   playRingChime();
                   return {
                     callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
-                    meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+                    meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Evaluation',
                     roomId: data.meeting?.room_id || 'remotion-room-pt_1',
                     meeting: data.meeting
                   };
@@ -559,7 +642,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
               playRingChime();
               return {
                 callerName: latest.callerName || 'Dr. Rajesh Kulkarni, PT',
-                meetingTitle: latest.meeting?.title || 'Clinical Video Review & Evaluation',
+                meetingTitle: latest.meeting?.title || 'Clinical Video Meeting & Evaluation',
                 roomId: latest.meeting?.room_id || 'remotion-room-pt_1',
                 meeting: latest.meeting
               };
@@ -574,19 +657,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       try {
         const res = await api.getMessages('u_therapist_1');
         if (res?.messages && res.messages.length > 0) {
-          setChatMessages(prev => {
-            const map = new Map();
-            prev.forEach(m => map.set(m.id, m));
-            let hasNewIncoming = false;
-            res.messages.forEach(m => {
-              if (!map.has(m.id)) {
-                if (m.sender_id !== 'u_patient_1') hasNewIncoming = true;
-                map.set(m.id, m);
-              }
-            });
-            if (hasNewIncoming) playMessageTone();
-            return Array.from(map.values()).sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
-          });
+          setChatMessages(prev => mergeAndDeduplicateMessages(prev, res.messages));
         }
       } catch (e) {}
     }, 800);
@@ -1352,15 +1423,28 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
               ))}
             </div>
 
-            {/* Message Input Box */}
-            <div className="p-4 bg-white border-t border-slate-200 flex items-center space-x-3">
+            {/* Message Input Box with Voice-to-Text */}
+            <div className="p-4 bg-white border-t border-slate-200 flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={toggleVoiceRecording}
+                className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                  isRecordingVoice
+                    ? 'bg-rose-50 border-rose-300 text-rose-600 animate-pulse ring-2 ring-rose-400/30'
+                    : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                }`}
+                title={isRecordingVoice ? 'Listening... click to stop' : 'Record clinical message via voice'}
+              >
+                {isRecordingVoice ? <MicOff className="w-4 h-4 text-rose-600" /> : <Mic className="w-4 h-4 text-slate-700" />}
+              </button>
+
               <input
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSendChatMessage()}
-                placeholder="Type a clinical update or question for Dr. Rajesh..."
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-teal-500"
+                placeholder={isRecordingVoice ? "Listening... Speak in English..." : "Type a clinical update or question for Dr. Rajesh..."}
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-teal-500 font-sans"
               />
               <button
                 onClick={() => handleSendChatMessage()}
@@ -1403,6 +1487,13 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                 <p className="text-xs text-slate-500 mt-2">{stats.total_reps || 117} Total Motor Repetitions</p>
               </div>
             </div>
+
+            {/* Realistic 3D Clinical Bar Graph */}
+            <ClinicalRecoveryBarChart
+              patientName={patient.name || 'Asha Sharma'}
+              targetRom={85}
+              baselineRom={42}
+            />
           </div>
         )}
 
@@ -1414,7 +1505,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900 font-display">Clinical Appointments & Telehealth</h2>
-                <p className="text-sm text-slate-700 font-medium mt-1">Scheduled video consultations and check-ins with Dr. Rajesh Kulkarni.</p>
+                <p className="text-sm text-slate-700 font-medium mt-1">Scheduled video meetings and check-ins with Dr. Rajesh Kulkarni.</p>
               </div>
 
               <button
@@ -1425,7 +1516,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                 className="px-5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs shadow-md shadow-teal-700/20 flex items-center justify-center space-x-2 cursor-pointer self-start sm:self-auto"
               >
                 <Video className="w-4 h-4" />
-                <span>Start Video Call Now</span>
+                <span>Start Video Meeting Now</span>
               </button>
             </div>
 
@@ -1444,7 +1535,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                         </span>
                       </div>
                       <p className="text-xs text-slate-700 font-semibold mt-1">
-                        {appt.therapist_name || 'Dr. Rajesh Kulkarni, PT'} • Telehealth Video Session
+                        {appt.therapist_name || 'Dr. Rajesh Kulkarni, PT'} • Telehealth Video Meeting
                       </p>
                       <div className="text-xs text-teal-900 bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-lg font-mono font-bold mt-1.5 inline-flex items-center space-x-1.5">
                         <Clock className="w-3.5 h-3.5 text-teal-700" />
@@ -1467,9 +1558,9 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                       className="px-5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs shadow-md shadow-teal-700/20 flex items-center justify-center space-x-2 cursor-pointer w-full sm:w-auto"
                     >
                       <Video className="w-4 h-4" />
-                      <span>Join Video Call</span>
+                      <span>Join Video Meeting</span>
                     </button>
-                    <span className="text-[10px] font-mono text-emerald-700 font-bold">Dual-Start Telehealth Sync</span>
+                    <span className="text-[10px] font-mono text-emerald-700 font-bold">Dual-Start Video Meeting Sync</span>
                   </div>
                 </div>
               ))}
@@ -1669,24 +1760,24 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
             <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-teal-950 border border-teal-800 text-[11px] font-mono text-teal-300 mb-2 font-bold uppercase">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>Incoming Video Consultation</span>
+              <span>Incoming Clinician Video Meeting</span>
             </div>
 
             <h3 className="text-xl font-bold text-white font-display">
               {incomingCall.callerName || 'Dr. Rajesh Kulkarni, PT'}
             </h3>
             <p className="text-xs text-slate-300 font-mono mt-1">
-              {incomingCall.meetingTitle || 'Clinical Video Review & Evaluation'}
+              {incomingCall.meetingTitle || 'Clinical Video Meeting & Evaluation'}
             </p>
             <p className="text-[11px] text-teal-200 mt-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 font-medium">
-              Your physical therapist is calling you now for an immediate video consultation. Click below to connect.
+              Your physical therapist is calling you now for an immediate video meeting. Click below to connect.
             </p>
 
             <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
               <button
                 onClick={() => {
                   setSelectedMeeting(incomingCall.meeting || {
-                    title: incomingCall.meetingTitle || 'Clinical Telehealth Consultation',
+                    title: incomingCall.meetingTitle || 'Clinical Telehealth Video Meeting',
                     scheduled_time: 'Now (Immediate Telehealth)',
                     room_id: incomingCall.roomId || 'remotion-room-pt_1'
                   });
@@ -1695,7 +1786,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
                 className="w-full sm:flex-1 py-3.5 rounded-2xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-teal-500/30 cursor-pointer transition-all"
               >
                 <Video className="w-5 h-5" />
-                <span>Accept & Join Call</span>
+                <span>Accept & Join Video Meeting</span>
               </button>
               <button
                 onClick={() => setIncomingCall(null)}
