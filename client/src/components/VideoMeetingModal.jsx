@@ -329,22 +329,6 @@ export default function VideoMeetingModal({
     draw();
 
     const canvasStream = canvas.captureStream ? canvas.captureStream(30) : null;
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) {
-        const audioCtx = new AudioCtx();
-        const osc = audioCtx.createOscillator();
-        const dst = audioCtx.createMediaStreamDestination();
-        osc.connect(dst);
-        osc.start();
-        const silentTrack = dst.stream.getAudioTracks()[0];
-        if (silentTrack && canvasStream) {
-          silentTrack.enabled = false;
-          canvasStream.addTrack(silentTrack);
-        }
-      }
-    } catch (e) {}
-
     return canvasStream;
   };
 
@@ -503,7 +487,12 @@ export default function VideoMeetingModal({
         remoteFallbackStreamRef.current = fallback;
         remoteVideoRef.current.srcObject = fallback;
         remoteVideoRef.current.playsInline = true;
-        remoteVideoRef.current.play().catch(() => {});
+        remoteVideoRef.current.play().catch(() => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.muted = true;
+            remoteVideoRef.current.play().catch(() => {});
+          }
+        });
       }
 
       // Exactly one peer creates the initial WebRTC offer to eliminate glare
@@ -577,7 +566,12 @@ export default function VideoMeetingModal({
         remoteFallbackStreamRef.current = initialRemoteFeed;
         remoteVideoRef.current.srcObject = initialRemoteFeed;
         remoteVideoRef.current.playsInline = true;
-        remoteVideoRef.current.play().catch(() => {});
+        remoteVideoRef.current.play().catch(() => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.muted = true;
+            remoteVideoRef.current.play().catch(() => {});
+          }
+        });
       }
 
       // 2. Setup RTCPeerConnection
@@ -600,7 +594,12 @@ export default function VideoMeetingModal({
             remoteVideoRef.current.srcObject.addTrack(event.track);
           }
           remoteVideoRef.current.playsInline = true;
-          remoteVideoRef.current.play().catch(console.warn);
+          remoteVideoRef.current.play().catch(() => {
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.muted = true;
+              remoteVideoRef.current.play().catch(() => {});
+            }
+          });
           setHasRemotePeer(true);
           setConnectionStatus('Direct Live Video Connected');
         }
@@ -979,44 +978,54 @@ export default function VideoMeetingModal({
         {/* Video Screen Layout (WhatsApp Mobile PiP by Default, or Split Screen) */}
         <div className="flex-1 p-3 sm:p-4 bg-slate-950/70 relative overflow-hidden flex flex-col justify-center">
           {layoutMode === 'whatsapp' ? (
-            /* WhatsApp Layout: Main Large Remote Video + Floating Corner PiP for Self */
+            /* WhatsApp Layout: Full Screen Main Feed + Floating PiP (Independent DOM nodes with zero ref detachment) */
             <div className="relative w-full h-full rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center">
-              {/* Primary Video Feed (Remote Participant, or Swapped to Self) */}
-              <video
-                ref={isSwapped ? localVideoRef : remoteVideoRef}
-                autoPlay
-                playsInline
-                muted={isSwapped}
-                className="w-full h-full object-cover"
-              />
-
-              {/* Identifier Pill on Main Feed */}
-              <div className="absolute top-4 left-4 z-20 flex items-center space-x-2 bg-black/70 px-3 py-1.5 rounded-full text-xs text-white backdrop-blur-md border border-slate-700">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span className="font-bold">{isSwapped ? `You (${myName})` : otherPeerName}</span>
-                <span className="text-[10px] text-cyan-400 font-mono">({isSwapped ? 'Local Feed' : otherPeerRoleLabel})</span>
-              </div>
-
-              {/* Floating WhatsApp-Style Picture-in-Picture (PiP) for Secondary Feed */}
+              {/* Remote Video Element */}
               <div
-                onClick={() => setIsSwapped(!isSwapped)}
-                className="absolute top-4 right-4 w-36 sm:w-48 aspect-[3/4] rounded-2xl bg-slate-900 border-2 border-cyan-400/80 shadow-2xl overflow-hidden z-30 cursor-pointer group hover:scale-105 transition-all"
-                title="Click to Swap Video Feeds"
+                onClick={isSwapped ? () => setIsSwapped(false) : undefined}
+                className={`transition-all duration-300 overflow-hidden ${
+                  !isSwapped
+                    ? 'w-full h-full absolute inset-0 z-10'
+                    : 'absolute top-4 right-4 w-36 sm:w-48 aspect-[3/4] rounded-2xl bg-slate-900 border-2 border-cyan-400/80 shadow-2xl z-30 cursor-pointer group hover:scale-105'
+                }`}
+                title={isSwapped ? 'Click to bring remote face to main view' : undefined}
               >
                 <video
-                  ref={isSwapped ? remoteVideoRef : localVideoRef}
+                  ref={remoteVideoRef}
                   autoPlay
                   playsInline
-                  muted={!isSwapped}
                   className="w-full h-full object-cover"
                 />
-
-                <div className="absolute bottom-2 left-2 right-2 bg-black/80 px-2 py-0.5 rounded text-[10px] text-white backdrop-blur-sm truncate text-center font-mono">
-                  {isSwapped ? otherPeerName : `You (${myName})`}
+                <div className={`bg-black/80 px-2.5 py-1 rounded-full text-white backdrop-blur-md border border-slate-700 ${
+                  !isSwapped ? 'absolute top-4 left-4 z-20 text-xs' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
+                }`}>
+                  <span className="font-bold">{otherPeerName}</span>
+                  {!isSwapped && <span className="text-[10px] text-cyan-400 font-mono ml-1.5">({otherPeerRoleLabel})</span>}
                 </div>
+              </div>
 
-                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-black/70 p-1 rounded-full text-cyan-300">
-                  <Maximize2 className="w-3 h-3" />
+              {/* Local Video Element */}
+              <div
+                onClick={!isSwapped ? () => setIsSwapped(true) : undefined}
+                className={`transition-all duration-300 overflow-hidden ${
+                  isSwapped
+                    ? 'w-full h-full absolute inset-0 z-10'
+                    : 'absolute top-4 right-4 w-36 sm:w-48 aspect-[3/4] rounded-2xl bg-slate-900 border-2 border-cyan-400/80 shadow-2xl z-30 cursor-pointer group hover:scale-105'
+                }`}
+                title={!isSwapped ? 'Click to expand self feed' : undefined}
+              >
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+                <div className={`bg-black/80 px-2.5 py-1 rounded-full text-white backdrop-blur-md border border-slate-700 ${
+                  isSwapped ? 'absolute top-4 left-4 z-20 text-xs' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
+                }`}>
+                  <span className="font-bold">You ({myName})</span>
+                  {isSwapped && <span className="text-[10px] text-cyan-400 font-mono ml-1.5">(Local Feed)</span>}
                 </div>
               </div>
             </div>

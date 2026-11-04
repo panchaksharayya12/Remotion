@@ -104,8 +104,51 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     }
   };
 
+  // Load meetings / appointments
+  const loadAppointments = async () => {
+    try {
+      const res = await api.getMeetings();
+      if (res?.meetings && res.meetings.length > 0) {
+        setAppointments(res.meetings);
+        try {
+          localStorage.setItem('remotion_all_appointments', JSON.stringify(res.meetings));
+        } catch (e) {}
+      }
+    } catch (e) {}
+  };
+
   useEffect(() => {
     loadDashboard();
+    loadAppointments();
+    const pollTimer = setInterval(loadAppointments, 2500);
+    return () => clearInterval(pollTimer);
+  }, []);
+
+  // Real-time Cloud Appointments Sync via ntfy.sh
+  useEffect(() => {
+    let apptSse = null;
+    try {
+      apptSse = new EventSource('https://ntfy.sh/remotion_appointments_sync/sse');
+      apptSse.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
+          if (raw.event === 'message' && raw.message) {
+            const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+            if (data.appointment) {
+              setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
+              setRealtimeNotice(`New video consultation scheduled: ${data.appointment.title}`);
+              setTimeout(() => setRealtimeNotice(null), 6000);
+            }
+          }
+        } catch (e) {}
+      };
+    } catch (e) {}
+
+    return () => {
+      if (apptSse) {
+        try { apptSse.close(); } catch (e) {}
+      }
+    };
   }, []);
 
   // Load chat messages with therapist

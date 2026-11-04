@@ -156,8 +156,48 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     }
   };
 
+  const loadAppointments = async () => {
+    try {
+      const res = await api.getMeetings();
+      if (res?.meetings && res.meetings.length > 0) {
+        setAppointments(res.meetings);
+        try {
+          localStorage.setItem('remotion_all_appointments', JSON.stringify(res.meetings));
+        } catch (e) {}
+      }
+    } catch (err) {}
+  };
+
   useEffect(() => {
     loadPatients();
+    loadAppointments();
+    const pollTimer = setInterval(loadAppointments, 2500);
+    return () => clearInterval(pollTimer);
+  }, []);
+
+  // Real-time Cloud Appointments Sync via ntfy.sh
+  useEffect(() => {
+    let apptSse = null;
+    try {
+      apptSse = new EventSource('https://ntfy.sh/remotion_appointments_sync/sse');
+      apptSse.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
+          if (raw.event === 'message' && raw.message) {
+            const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+            if (data.appointment) {
+              setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
+            }
+          }
+        } catch (e) {}
+      };
+    } catch (e) {}
+
+    return () => {
+      if (apptSse) {
+        try { apptSse.close(); } catch (e) {}
+      }
+    };
   }, []);
 
   // Load Individual Patient Details when selected
@@ -246,7 +286,6 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     try {
       fetch('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'IMMEDIATE_START_CALL',
           callerRole: 'therapist',
@@ -325,6 +364,17 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     } catch (apiErr) {
       console.warn('Backend API schedule sync note:', apiErr);
     }
+
+    // Cloud pub/sub sync across Edge/Chrome
+    try {
+      fetch('https://ntfy.sh/remotion_appointments_sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'APPOINTMENT_SCHEDULED',
+          appointment: newMeeting
+        })
+      }).catch(() => {});
+    } catch (e) {}
 
     setShowScheduleModal(false);
     setToastMessage(`Consultation scheduled with ${newMeeting.patient_name} for ${newMeeting.scheduled_time}`);
@@ -979,6 +1029,73 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                   <span className="text-blue-600 font-bold">Latency: &lt;15ms</span>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Dedicated Caseload Telehealth Readiness & Quick Connect (When in Appointments or Video Tab) */}
+        {(activeTab === 'appointments' || activeTab === 'video') && (
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm mb-8 animate-fadeIn">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 mb-6 gap-2">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                  <Users className="w-5 h-5 text-blue-600" />
+                  <span>Caseload Telehealth Readiness & Instant 1-Click Calling</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Start an instant encrypted WebRTC video consultation with any registered patient right now.
+                </p>
+              </div>
+              <span className="text-xs font-mono bg-emerald-50 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-200 flex items-center space-x-1.5 self-start sm:self-auto">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>{patients.length} Patients Available</span>
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {patients.map((pt) => (
+                <div key={pt.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 hover:border-blue-300 transition-all flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-bold text-sm text-slate-900">{pt.name}</span>
+                      <span className="text-[10px] font-mono bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full">
+                        {pt.condition || 'Neuro-Rehab'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 font-mono">
+                      Compliance: <span className="font-bold text-emerald-600">{pt.compliance || '94%'}</span> • Level: <span className="font-bold text-blue-600">{pt.level || '3'}</span>
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1 font-mono">
+                      Last Session: {pt.last_session || 'Today, Active'}
+                    </p>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-slate-200 flex items-center space-x-2">
+                    <button
+                      onClick={() => startImmediateCall({
+                        title: `Clinical Video Review with ${pt.name}`,
+                        patient_id: pt.id,
+                        patient_name: pt.name,
+                        room_id: `remotion-room-${pt.id}`
+                      })}
+                      className="flex-1 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-sm shadow-blue-600/20 cursor-pointer transition-all"
+                    >
+                      <Video className="w-3.5 h-3.5" />
+                      <span>Start Video Call</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSelectedPatientId(pt.id);
+                        setActiveTab('prescriptions');
+                      }}
+                      className="p-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold"
+                      title="View Prescriptions"
+                    >
+                      <FileText className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

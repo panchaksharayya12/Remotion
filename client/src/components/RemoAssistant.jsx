@@ -162,33 +162,31 @@ export default function RemoAssistant({ isExerciseActive = false, userRole = 'pa
           className="fixed bottom-6 right-6 z-40 group flex items-center space-x-3 bg-slate-900/90 hover:bg-slate-800 border border-cyan-500/40 p-2.5 rounded-full shadow-2xl backdrop-blur-xl transition-all duration-300 hover:scale-105"
           title="Open Remo Assistant"
         >
-          {/* Animated Water-Drop Mascot SVG */}
+          {/* High-Tech Clinical AI Companion Icon (No Emojis or Cartoon Faces) */}
           <div className="relative w-12 h-12 flex items-center justify-center">
             <svg viewBox="0 0 100 100" className="w-full h-full drop-shadow-md">
               <defs>
                 <linearGradient id="dropGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#38bdf8" />
-                  <stop offset="50%" stopColor="#00d4ff" />
+                  <stop offset="0%" stopColor="#0ea5e9" />
+                  <stop offset="50%" stopColor="#06b6d4" />
                   <stop offset="100%" stopColor="#0284c7" />
                 </linearGradient>
               </defs>
-              {/* Teardrop Body */}
+              {/* Sleek Teardrop Body */}
               <path
                 d="M50 15 C50 15 20 52 20 70 A30 30 0 0 0 80 70 C80 52 50 15 50 15 Z"
                 fill="url(#dropGrad)"
                 className="animate-pulse-slow"
               />
-              {/* Cute Eyes */}
-              <circle cx="42" cy="62" r="4" fill="#080c14" />
-              <circle cx="58" cy="62" r="4" fill="#080c14" />
-              <circle cx="43.5" cy="60.5" r="1.5" fill="#ffffff" />
-              <circle cx="59.5" cy="60.5" r="1.5" fill="#ffffff" />
-              {/* Mouth based on mascotState */}
-              {mascotState === 'concerned' ? (
-                <path d="M44 76 Q50 72 56 76" stroke="#080c14" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-              ) : (
-                <path d="M44 72 Q50 78 56 72" stroke="#080c14" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-              )}
+              {/* Medical Kinematics Pulse Waveform (Replaces Cartoon Face) */}
+              <path
+                d="M32 68 L41 68 L45 56 L51 76 L56 62 L60 68 L68 68"
+                fill="none"
+                stroke="#ffffff"
+                strokeWidth="3.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
             <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-slate-900 animate-pulse"></span>
           </div>
@@ -208,22 +206,21 @@ export default function RemoAssistant({ isExerciseActive = false, userRole = 'pa
           {/* Top Bar with Mascot and Controls */}
           <div className="p-4 bg-gradient-to-r from-slate-950 via-cyan-950/40 to-slate-950 border-b border-slate-800 flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              {/* Mini Water-Drop Mascot */}
+              {/* Mini Clinical AI Icon */}
               <div className="w-10 h-10 flex items-center justify-center shrink-0">
                 <svg viewBox="0 0 100 100" className="w-full h-full">
                   <path
                     d="M50 15 C50 15 20 52 20 70 A30 30 0 0 0 80 70 C80 52 50 15 50 15 Z"
-                    fill="#00d4ff"
+                    fill="#06b6d4"
                   />
-                  <circle cx="42" cy="62" r="4" fill="#080c14" />
-                  <circle cx="58" cy="62" r="4" fill="#080c14" />
-                  <circle cx="43.5" cy="60.5" r="1.5" fill="#ffffff" />
-                  <circle cx="59.5" cy="60.5" r="1.5" fill="#ffffff" />
-                  {mascotState === 'concerned' ? (
-                    <path d="M44 76 Q50 72 56 76" stroke="#080c14" strokeWidth="2.5" fill="none" />
-                  ) : (
-                    <path d="M44 72 Q50 78 56 72" stroke="#080c14" strokeWidth="2.5" fill="none" />
-                  )}
+                  <path
+                    d="M32 68 L41 68 L45 56 L51 76 L56 62 L60 68 L68 68"
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth="3.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </div>
               <div>

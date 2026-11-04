@@ -70,6 +70,12 @@ ReMotion delivers four specialized, purpose-built workspaces under a single unif
   - Floating multilingual **Remo Assistant** supporting voice accessibility and query assistance in English, Hindi, Kannada, Tamil, Telugu, and Hinglish.
   - Telehealth appointment scheduler with instant **Join Video Call** WebRTC room launcher.
 
+<p align="center">
+  <img src="docs/images/figure1-patient-workspace.svg" alt="Patient Workspace - Real-Time MediaPipe Optical Hand Tracking" width="85%" />
+  <br />
+  <em>Figure 1: Patient Workspace — Real-Time MediaPipe Optical Hand Tracking & Volumetric Fill Squeeze Mechanics.</em>
+</p>
+
 ---
 
 ### Portal 2: Therapist Clinical Command (Hospital Navy Workspace)

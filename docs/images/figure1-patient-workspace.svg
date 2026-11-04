@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 620" width="1024" height="620">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stopColor="#070c18" />
+      <stop offset="100%" stopColor="#0a1324" />
+    </linearGradient>
+    <linearGradient id="panelGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stopColor="#0d172c" />
+      <stop offset="100%" stopColor="#080f1e" />
+    </linearGradient>
+    <linearGradient id="clenchGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stopColor="#0284c7" />
+      <stop offset="100%" stopColor="#06b6d4" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <filter id="sensorGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="620" fill="url(#bgGrad)" />
+
+  <!-- Top App Navigation Bar -->
+  <rect x="0" y="0" width="1024" height="64" fill="#080e1a" />
+  <line x1="0" y1="64" x2="1024" y2="64" stroke="#1e293b" stroke-width="1" />
+
+  <!-- ReMotion Logo & Brand -->
+  <g transform="translate(24, 16)">
+    <rect x="0" y="0" width="32" height="32" rx="8" fill="#0284c7" />
+    <path d="M6 16 L12 16 L15 9 L19 23 L22 13 L24 16 L28 16" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="42" y="18" fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="bold">ReMotion</text>
+    <rect x="132" y="4" width="70" height="20" rx="6" fill="#082f49" stroke="#0284c7" stroke-width="1" />
+    <text x="142" y="18" fill="#38bdf8" font-family="monospace" font-size="10" font-weight="bold">AR/VR XR2</text>
+    <text x="42" y="31" fill="#64748b" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10">Immersive Motor Rehabilitation</text>
+  </g>
+
+  <!-- Top Right Status Badges -->
+  <g transform="translate(680, 18)">
+    <!-- Headset Status -->
+    <rect x="0" y="0" width="105" height="28" rx="14" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
+    <circle cx="16" cy="14" r="5" fill="#38bdf8" />
+    <text x="28" y="18" fill="#94a3b8" font-family="-apple-system, sans-serif" font-size="11" font-weight="bold">Headset</text>
+    <circle cx="88" cy="14" r="3" fill="#10b981" />
+
+    <!-- Demo Role -->
+    <rect x="115" y="0" width="110" height="28" rx="14" fill="#0369a1" />
+    <text x="130" y="18" fill="#ffffff" font-family="-apple-system, sans-serif" font-size="11" font-weight="bold">Demo Role</text>
+
+    <!-- User Profile -->
+    <rect x="235" y="0" width="95" height="28" rx="14" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
+    <circle cx="249" cy="14" r="10" fill="#0284c7" />
+    <text x="243" y="18" fill="#ffffff" font-family="sans-serif" font-size="9" font-weight="bold">KS</text>
+    <text x="265" y="18" fill="#e2e8f0" font-family="-apple-system, sans-serif" font-size="11" font-weight="bold">Kavya</text>
+  </g>
+
+  <!-- Four Metric Telemetry Cards -->
+  <!-- 1. Repetitions -->
+  <g transform="translate(48, 88)">
+    <rect width="210" height="74" rx="14" fill="url(#panelGrad)" stroke="#1e293b" stroke-width="1" />
+    <text x="18" y="24" fill="#64748b" font-family="monospace" font-size="10" font-weight="bold" letter-spacing="1">REPETITIONS</text>
+    <text x="18" y="56" fill="#38bdf8" font-family="monospace" font-size="26" font-weight="bold">0</text>
+    <text x="38" y="56" fill="#64748b" font-family="monospace" font-size="16"> / 15</text>
+  </g>
+
+  <!-- 2. Time Elapsed -->
+  <g transform="translate(282, 88)">
+    <rect width="210" height="74" rx="14" fill="url(#panelGrad)" stroke="#1e293b" stroke-width="1" />
+    <text x="18" y="24" fill="#64748b" font-family="monospace" font-size="10" font-weight="bold" letter-spacing="1">TIME ELAPSED</text>
+    <text x="18" y="56" fill="#f8fafc" font-family="monospace" font-size="26" font-weight="bold">0:00</text>
+  </g>
+
+  <!-- 3. Progress Fill -->
+  <g transform="translate(516, 88)">
+    <rect width="210" height="74" rx="14" fill="url(#panelGrad)" stroke="#1e293b" stroke-width="1" />
+    <text x="18" y="24" fill="#64748b" font-family="monospace" font-size="10" font-weight="bold" letter-spacing="1">PROGRESS FILL</text>
+    <text x="18" y="56" fill="#10b981" font-family="monospace" font-size="26" font-weight="bold">0%</text>
+  </g>
+
+  <!-- 4. Tracking Quality -->
+  <g transform="translate(750, 88)">
+    <rect width="226" height="74" rx="14" fill="url(#panelGrad)" stroke="#1e293b" stroke-width="1" />
+    <text x="18" y="24" fill="#64748b" font-family="monospace" font-size="10" font-weight="bold" letter-spacing="1">TRACKING QUALITY</text>
+    <circle cx="26" cy="48" r="4" fill="#10b981" />
+    <text x="36" y="53" fill="#38bdf8" font-family="monospace" font-size="15" font-weight="bold">Optimal (99%)</text>
+  </g>
+
+  <!-- Main Patient Workspace Canvas -->
+  <g transform="translate(48, 180)">
+    <rect width="928" height="400" rx="16" fill="#040812" stroke="#1e293b" stroke-width="1.5" />
+
+    <!-- Center Left Clenched Box with MediaPipe Optical Landmarks -->
+    <g transform="translate(280, 160)">
+      <rect x="0" y="0" width="160" height="96" rx="14" fill="url(#clenchGrad)" opacity="0.85" stroke="#38bdf8" stroke-width="2" filter="url(#glow)" />
+      <!-- MediaPipe 5 Keypoints Representation -->
+      <circle cx="48" cy="48" r="3.5" fill="#ffffff" />
+      <circle cx="70" cy="35" r="3.5" fill="#ffffff" />
+      <circle cx="92" cy="42" r="3.5" fill="#ffffff" />
+      <circle cx="114" cy="54" r="3.5" fill="#ffffff" />
+      <circle cx="75" cy="62" r="3.5" fill="#ffffff" />
+      <text x="80" y="126" text-anchor="middle" fill="#64748b" font-family="monospace" font-size="11" font-weight="bold" letter-spacing="1.5">CLENCHED</text>
+    </g>
+
+    <!-- Center Right Volumetric Beaker -->
+    <g transform="translate(520, 90)">
+      <!-- Beaker Outline -->
+      <path d="M0 0 L0 230 L110 230 L110 0" fill="none" stroke="#0284c7" stroke-width="2.5" />
+      <!-- Markings -->
+      <line x1="85" y1="30" x2="105" y2="30" stroke="#0284c7" stroke-width="1.5" />
+      <text x="80" y="34" text-anchor="end" fill="#64748b" font-family="monospace" font-size="9">100% —</text>
+
+      <line x1="85" y1="75" x2="105" y2="75" stroke="#0284c7" stroke-width="1.5" />
+      <text x="80" y="79" text-anchor="end" fill="#64748b" font-family="monospace" font-size="9">80% —</text>
+
+      <line x1="85" y1="120" x2="105" y2="120" stroke="#0284c7" stroke-width="1.5" />
+      <text x="80" y="124" text-anchor="end" fill="#64748b" font-family="monospace" font-size="9">60% —</text>
+
+      <line x1="85" y1="165" x2="105" y2="165" stroke="#0284c7" stroke-width="1.5" />
+      <text x="80" y="169" text-anchor="end" fill="#64748b" font-family="monospace" font-size="9">40% —</text>
+
+      <line x1="85" y1="205" x2="105" y2="205" stroke="#0284c7" stroke-width="1.5" />
+      <text x="80" y="209" text-anchor="end" fill="#64748b" font-family="monospace" font-size="9">20% —</text>
+    </g>
+
+    <!-- Bottom Volume Indicator Bar -->
+    <rect x="80" y="356" width="768" height="12" rx="6" fill="#0f172a" />
+    <text x="464" y="386" text-anchor="middle" fill="#0284c7" font-family="monospace" font-size="11" font-weight="bold" letter-spacing="1">VOLUME: 0%</text>
+
+    <!-- Clean High-Tech Clinical Optical Sensor Preview (Zero Photos / Privacy Calibrated) -->
+    <g transform="translate(760, 20)">
+      <rect width="144" height="108" rx="10" fill="#0a1222" stroke="#0284c7" stroke-width="1.5" />
+      <!-- Grid Overlay -->
+      <line x1="0" y1="36" x2="144" y2="36" stroke="#1e293b" stroke-width="0.8" stroke-dasharray="3,3" />
+      <line x1="0" y1="72" x2="144" y2="72" stroke="#1e293b" stroke-width="0.8" stroke-dasharray="3,3" />
+      <line x1="48" y1="0" x2="48" y2="108" stroke="#1e293b" stroke-width="0.8" stroke-dasharray="3,3" />
+      <line x1="96" y1="0" x2="96" y2="108" stroke="#1e293b" stroke-width="0.8" stroke-dasharray="3,3" />
+
+      <!-- Optical Joint Sensor Silhouette & Landmark Tracker -->
+      <circle cx="72" cy="42" r="16" fill="none" stroke="#38bdf8" stroke-width="1.5" />
+      <path d="M48 94 C48 70 96 70 96 94" fill="none" stroke="#38bdf8" stroke-width="1.5" />
+      <circle cx="72" cy="42" r="3" fill="#38bdf8" filter="url(#sensorGlow)" />
+
+      <!-- Sensor Status Pill -->
+      <rect x="8" y="8" width="85" height="16" rx="4" fill="#082f49" />
+      <circle cx="16" cy="16" r="2.5" fill="#10b981" />
+      <text x="23" y="19.5" fill="#38bdf8" font-family="monospace" font-size="7.5" font-weight="bold">OPTICAL HUD</text>
+
+      <text x="72" y="100" text-anchor="middle" fill="#64748b" font-family="monospace" font-size="7">60 FPS DEPTH CALIBRATED</text>
+    </g>
+  </g>
+</svg>
