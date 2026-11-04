@@ -18,7 +18,13 @@ import PlayableGameModal from './PlayableGameModal';
 import GameThumbnail from '../components/GameThumbnail';
 import ClinicalRecoveryBarChart from '../components/ClinicalRecoveryBarChart';
 
-// Robust Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
+// Bulletproof Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
+const isSameSenderRole = (m1, m2) => {
+  const isDoc1 = m1.sender_id === 'u_therapist_1' || m1.sender_name?.includes('Rajesh') || m1.sender_id?.includes('therapist');
+  const isDoc2 = m2.sender_id === 'u_therapist_1' || m2.sender_name?.includes('Rajesh') || m2.sender_id?.includes('therapist');
+  return isDoc1 === isDoc2;
+};
+
 const mergeAndDeduplicateMessages = (prevList, incoming) => {
   const merged = [...(prevList || [])];
   const items = Array.isArray(incoming) ? incoming : [incoming];
@@ -27,23 +33,26 @@ const mergeAndDeduplicateMessages = (prevList, incoming) => {
     if (!item || !item.message_text) continue;
 
     // 1. Exact ID match
-    const idIdx = merged.findIndex(m => m.id === item.id);
+    const idIdx = merged.findIndex(m => m.id && item.id && m.id === item.id);
     if (idIdx !== -1) {
       merged[idIdx] = { ...merged[idIdx], ...item };
       continue;
     }
 
-    // 2. Fuzzy match: same sender, same text, within 15 seconds
-    const fuzzyIdx = merged.findIndex(m => {
-      if (m.sender_id !== item.sender_id) return false;
-      if ((m.message_text || '').trim() !== (item.message_text || '').trim()) return false;
+    // 2. Bulletproof text + sender-side match within 90 seconds
+    const normItemText = (item.message_text || '').trim().toLowerCase();
+    const dupIdx = merged.findIndex(m => {
+      const normMText = (m.message_text || '').trim().toLowerCase();
+      if (normMText !== normItemText) return false;
+      if (!isSameSenderRole(m, item)) return false;
       const t1 = new Date(m.created_at || 0).getTime();
       const t2 = new Date(item.created_at || 0).getTime();
-      return Math.abs(t1 - t2) < 15000;
+      if (!t1 || !t2) return true;
+      return Math.abs(t1 - t2) < 90000;
     });
 
-    if (fuzzyIdx !== -1) {
-      merged[fuzzyIdx] = { ...merged[fuzzyIdx], ...item };
+    if (dupIdx !== -1) {
+      merged[dupIdx] = { ...merged[dupIdx], ...item };
     } else {
       merged.push(item);
     }
@@ -846,7 +855,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
               { id: 'exercises', label: 'Prescribed Exercises', icon: Dumbbell },
               { id: 'chat', label: 'Clinician Chat', icon: MessageSquare },
               { id: 'progress', label: 'Recovery Progress', icon: BarChart3 },
-              { id: 'appointments', label: 'Appointments', icon: Calendar },
+              { id: 'appointments', label: 'Video Meetings', icon: Video },
               { id: 'history', label: 'Session History', icon: History },
               { id: 'assistant', label: 'Remo Assistant', icon: Sparkles },
               { id: 'profile', label: 'My Profile', icon: User }
@@ -1491,14 +1500,14 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
           <div className="space-y-6 animate-fadeIn">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-bold text-slate-900 font-display">Clinical Appointments & Telehealth</h2>
+                <h2 className="text-2xl font-bold text-slate-900 font-display">Video Meetings & Telehealth Consultations</h2>
                 <p className="text-sm text-slate-700 font-medium mt-1">Scheduled video meetings and check-ins with Dr. Rajesh Kulkarni.</p>
               </div>
 
               <button
                 onClick={() => joinImmediateCall({
                   title: 'Immediate Clinical Video Consultation',
-                  room_id: `remotion-room-pt_1`
+                  room_id: `remotion-room-${myPatientId}`
                 })}
                 className="px-5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs shadow-md shadow-teal-700/20 flex items-center justify-center space-x-2 cursor-pointer self-start sm:self-auto"
               >

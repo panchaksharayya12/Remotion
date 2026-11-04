@@ -293,6 +293,31 @@ class ApiService {
     }
 
     if (endpoint === '/therapist/patients') {
+      if (options.method === 'POST') {
+        const newId = 'pt_' + Date.now().toString(36);
+        const newPt = {
+          id: newId,
+          user_id: 'u_' + newId,
+          name: (body.name || 'New Patient').trim(),
+          age: Number(body.age) || 52,
+          gender: body.gender || 'Not Specified',
+          condition: (body.condition || 'Post-Stroke Left Upper Limb Hemiparesis').trim(),
+          recovery_level: typeof body.level === 'string' && body.level.includes('Stage') ? body.level : `Stage ${body.level || 3} Recovery`,
+          affected_side: body.affected_side || 'Left Upper Limb',
+          primary_language: body.primary_language || 'en',
+          emergency_contact: body.emergency_contact || '+91 98450 12345',
+          total_sessions: 1,
+          avg_accuracy: 92.0,
+          peak_rom: 62.0,
+          level: Number(parseInt(body.level, 10)) || 3,
+          streak: 1,
+          compliance: '100%',
+          active_prescriptions_count: 2,
+          notes: body.notes || 'Clinical record initialized.'
+        };
+        CLINICAL_DATASETS.patients.unshift(newPt);
+        return { success: true, patient: newPt, patients: CLINICAL_DATASETS.patients };
+      }
       return { patients: CLINICAL_DATASETS.patients };
     }
 
@@ -345,29 +370,40 @@ class ApiService {
     if (endpoint.startsWith('/messages')) {
       if (options.method === 'POST') {
         const msg = {
-          id: 'msg_' + Date.now().toString(36),
-          sender_id: this.user?.id || 'u_therapist_1',
-          sender_name: this.user?.name || 'Dr. Rajesh Kulkarni, PT',
+          id: body.id || ('msg_' + Date.now().toString(36)),
+          patient_id: body.patient_id || 'pt_1',
+          sender_id: body.sender_id || this.user?.id || 'u_therapist_1',
+          sender_name: body.sender_name || this.user?.name || 'Dr. Rajesh Kulkarni, PT',
           receiver_id: body.receiver_id || 'u_patient_1',
           message_text: body.message_text || '',
-          translated_text: body.message_text || '',
-          created_at: new Date().toISOString()
+          translated_text: body.translated_text || body.message_text || '',
+          created_at: body.created_at || new Date().toISOString()
         };
         try {
           const stored = JSON.parse(localStorage.getItem('remotion_clinical_chat_messages') || '[]');
-          stored.push(msg);
-          localStorage.setItem('remotion_clinical_chat_messages', JSON.stringify(stored));
+          const exists = stored.some(m => m.id === msg.id || (m.message_text === msg.message_text && m.sender_id === msg.sender_id && Math.abs(new Date(m.created_at).getTime() - new Date(msg.created_at).getTime()) < 30000));
+          if (!exists) {
+            stored.push(msg);
+            localStorage.setItem('remotion_clinical_chat_messages', JSON.stringify(stored));
+          }
         } catch (e) {}
         return { success: true, message: msg };
       }
       try {
         const stored = JSON.parse(localStorage.getItem('remotion_clinical_chat_messages') || 'null');
-        if (stored) return { messages: stored };
+        if (stored) {
+          const targetPt = endpoint.replace('/messages/', '').replace('/messages', '').trim();
+          if (targetPt) {
+            return { messages: stored.filter(m => m.patient_id === targetPt || m.receiver_id === targetPt || m.sender_id === targetPt || (targetPt === 'pt_1' && (!m.patient_id || m.receiver_id === 'u_patient_1'))) };
+          }
+          return { messages: stored };
+        }
       } catch (e) {}
       return {
         messages: [
           {
             id: 'msg_1',
+            patient_id: 'pt_1',
             sender_id: 'u_therapist_1',
             sender_name: 'Dr. Rajesh Kulkarni, PT',
             receiver_id: 'u_patient_1',
@@ -377,6 +413,7 @@ class ApiService {
           },
           {
             id: 'msg_2',
+            patient_id: 'pt_1',
             sender_id: 'u_patient_1',
             sender_name: 'Asha Sharma',
             receiver_id: 'u_therapist_1',
@@ -386,6 +423,51 @@ class ApiService {
           }
         ]
       };
+    }
+
+    if (endpoint === '/remo/chat' || endpoint.startsWith('/remo/chat')) {
+      const userMsg = (body.message || '').trim().toLowerCase();
+      const lang = body.language || 'en';
+      let reply = '';
+      let mascotState = 'encouraging';
+
+      if (userMsg.includes('hi') || userMsg.includes('hello') || userMsg.includes('hey') || userMsg.includes('namaste')) {
+        if (lang === 'kn') {
+          reply = 'ನಮಸ್ಕಾರ! ನಾನು ರೆಮೋ, ನಿಮ್ಮ ಪುನರ್ವಸತಿ ಸಹಾಯಕ. ಇಂದಿನ ಮೋಟಾರ್ ವ್ಯಾಯಾಮ ಅಥವಾ ಥೆರಪಿಸ್ಟ್ ಸಮಾಲೋಚನೆಗೆ ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?';
+        } else if (lang === 'hi') {
+          reply = 'नमस्ते! मैं रेमो हूँ, आपका पुनर्वास सहायक। आज मैं आपके व्यायाम और रिकवरी में कैसे मदद कर सकता हूँ?';
+        } else {
+          reply = 'Hello! I am Remo, your rehabilitation companion. How can I assist your upper-limb recovery and exercises today?';
+        }
+        mascotState = 'happy';
+      } else if (userMsg.includes('squeeze') || userMsg.includes('sponge') || userMsg.includes('grip') || userMsg.includes('hand')) {
+        if (lang === 'kn') {
+          reply = 'ಸ್ಕ್ವೀಜ್ ಮತ್ತು ಫಿಲ್ ವ್ಯಾಯಾಮ: ನಿಮ್ಮ ಕೈಯನ್ನು ಕ್ಯಾಮರಾ ಮುಂದೆ ತೆರೆದು, ನಂತರ ಬೆರಳುಗಳನ್ನು ನಿಧಾನವಾಗಿ ಒಳಕ್ಕೆ ಮಡಚಿ ಸ್ಪಂಜನ್ನು ಒತ್ತಿ. ಇದು ಬೆರಳುಗಳ ಚಲನೆ ಮತ್ತು ಬಲವನ್ನು ಹೆಚ್ಚಿಸುತ್ತದೆ.';
+        } else if (lang === 'hi') {
+          reply = 'स्क्वीज़ एंड फिल व्यायाम: अपने हाथ को पूरा खोलें और फिर धीरे-धीरे मुट्ठी भींचें। यह उंगलियों की सक्रिय गति और पकड़ शक्ति को बढ़ाता है।';
+        } else {
+          reply = 'Squeeze & Fill Exercise: Position your hand in front of the camera, open your fingers fully, and slowly clench into a fist to compress the virtual sponge. This strengthens flexor muscles and restores functional grip.';
+        }
+        mascotState = 'encouraging';
+      } else if (userMsg.includes('reach') || userMsg.includes('touch') || userMsg.includes('shoulder')) {
+        reply = 'Reach & Touch Exercise: Extend your affected arm towards the 3D illuminated targets. Focus on keeping your shoulder relaxed without compensatory trunk lean. Dr. Rajesh monitors your spatial accuracy and range of motion.';
+        mascotState = 'encouraging';
+      } else if (userMsg.includes('pain') || userMsg.includes('hurt') || userMsg.includes('tired') || userMsg.includes('fatigue')) {
+        reply = 'Clinical Notice: If you experience acute pain (above 3/10) or significant fatigue, please stop the exercise immediately, rest your arm on a supported surface, and alert Dr. Rajesh via Clinician Chat.';
+        mascotState = 'concerned';
+      } else if (userMsg.includes('vr') || userMsg.includes('headset') || userMsg.includes('quest')) {
+        reply = 'To use VR mode: Put on your Meta Quest 3 or Apple Vision Pro headset, open the browser, and navigate to this workspace. Click "Enter VR" to engage immersive 6DOF rehabilitation!';
+        mascotState = 'encouraging';
+      } else {
+        if (lang === 'kn') {
+          reply = 'ನಿಮ್ಮ ಚೇತರಿಕೆಯ ಗುರಿಗಳನ್ನು ತಲುಪಲು ನಿಮ್ಮ ದೈನಂದಿನ ಸೂಚಿತ ವ್ಯಾಯಾಮಗಳನ್ನು ಪೂರ್ಣಗೊಳಿಸಿ. ಹೆಚ್ಚಿನ ಮಾರ್ಗದರ್ಶನಕ್ಕಾಗಿ ಡಾ. ರಾಜೇಶ್ ಅವರೊಂದಿಗೆ ವೀಡಿಯೊ ಸಮಾಲೋಚನೆ ಪ್ರಾರಂಭಿಸಿ.';
+        } else if (lang === 'hi') {
+          reply = 'अपनी दैनिक फिजियोथेरेपी समय पर पूरी करें। उंगलियों और बांह के समन्वय में सुधार हो रहा है। किसी भी सवाल के लिए क्लिनिशियन चैट का उपयोग करें।';
+        } else {
+          reply = 'I am here to guide your rehabilitation. Complete your daily prescribed exercises (Squeeze & Fill and Reach & Touch), track your ROM progress, or connect with Dr. Rajesh via Video Meeting.';
+        }
+      }
+      return { success: true, reply, mascotState };
     }
 
     return undefined;
@@ -433,10 +515,10 @@ class ApiService {
   }
 
   // Auth
-  async login(email, password) {
+  async login(email, password, role) {
     const data = await this.request('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, role })
     });
     this.setAuth(data.token, data.user);
     return data;
@@ -508,6 +590,13 @@ class ApiService {
     return this.request(`/therapist/patients/${id}`, {
       method: 'PUT',
       body: JSON.stringify(updates)
+    });
+  }
+
+  async createPatient(patientData) {
+    return this.request('/therapist/patients', {
+      method: 'POST',
+      body: JSON.stringify(patientData)
     });
   }
 

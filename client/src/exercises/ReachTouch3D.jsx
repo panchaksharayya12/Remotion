@@ -80,6 +80,19 @@ export default function ReachTouch3D({
     };
   }, [isMarkerlessAR]);
 
+  // Global Shift Key Emergency Exit listener
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        e.preventDefault();
+        setIsActive(false);
+        if (onExit) onExit();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onExit]);
+
   // 3. Setup Three.js 3D Scene with Markerless AR & 3D Skeletal Bone Detector
   useEffect(() => {
     const container = mountRef.current;
@@ -427,12 +440,12 @@ export default function ReachTouch3D({
   };
 
   return (
-    <div className="w-full min-h-screen flex flex-col justify-between bg-[#070d18] border border-cyan-500/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-[#060a14] w-screen h-screen flex flex-col justify-between p-3 sm:p-5 overflow-hidden select-none">
       {/* Top Header & Emergency Stop */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-3">
         <div>
           <div className="flex items-center space-x-2">
-            <h3 className="text-xl font-bold text-white font-display">
+            <h3 className="text-lg sm:text-xl font-bold text-white font-display">
               Reach & Touch — 3D Spatial Motor Coordination
             </h3>
             <span className="text-[10px] font-mono bg-cyan-950 text-cyan-400 border border-cyan-800 px-2 py-0.5 rounded-full">
@@ -445,6 +458,11 @@ export default function ReachTouch3D({
         </div>
 
         <div className="flex items-center space-x-2.5">
+          <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-rose-950/80 border border-rose-500/70 text-rose-300 font-mono text-xs font-bold shadow-lg shadow-rose-950/40">
+            <ShieldAlert className="w-4 h-4 text-rose-400" />
+            <span>EMERGENCY EXIT: Press Shift Key</span>
+          </div>
+
           {!isActive || isPaused ? (
             <button
               onClick={() => {
@@ -471,10 +489,11 @@ export default function ReachTouch3D({
               setIsActive(false);
               if (onExit) onExit();
             }}
-            className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white font-bold text-xs shadow-lg shadow-rose-600/20 transition-all cursor-pointer"
+            className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 transition-all cursor-pointer"
+            title="Press Shift key for instant Emergency Exit"
           >
             <ShieldAlert className="w-4 h-4" />
-            <span>Emergency Exit</span>
+            <span>Exit [Shift]</span>
           </button>
         </div>
       </div>

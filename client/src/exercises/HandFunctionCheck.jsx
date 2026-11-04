@@ -276,16 +276,28 @@ export default function HandFunctionCheck({ onComplete, onExit }) {
     }
   };
 
+  // Global Shift Key Emergency Exit listener
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        e.preventDefault();
+        if (onExit) onExit();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onExit]);
+
   return (
-    <div className="w-full min-h-screen flex flex-col justify-between bg-[#070d18] border border-cyan-500/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-[#060a14] w-screen h-screen flex flex-col justify-between p-3 sm:p-5 overflow-hidden select-none">
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-3">
         <div className="flex items-center space-x-3">
-          <div className="w-12 h-12 rounded-2xl bg-cyan-950 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-            <ClipboardCheck className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-xl bg-cyan-950 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+            <ClipboardCheck className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-xl font-bold text-white font-display">
+            <h3 className="text-lg sm:text-xl font-bold text-white font-display">
               Clinical Hand Function Assessment
             </h3>
             <p className="text-xs text-slate-400">
@@ -294,12 +306,19 @@ export default function HandFunctionCheck({ onComplete, onExit }) {
           </div>
         </div>
 
-        <button
-          onClick={onExit}
-          className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs text-slate-300 font-medium transition-colors cursor-pointer"
-        >
-          Exit Assessment
-        </button>
+        <div className="flex items-center space-x-2">
+          <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-rose-950/80 border border-rose-500/70 text-rose-300 font-mono text-xs font-bold shadow-lg shadow-rose-950/40">
+            <span>EMERGENCY EXIT: Press Shift Key</span>
+          </div>
+
+          <button
+            onClick={onExit}
+            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-600/30 transition-all cursor-pointer"
+            title="Press Shift key for instant Emergency Exit"
+          >
+            Exit [Shift]
+          </button>
+        </div>
       </div>
 
       {!isAssessmentDone ? (

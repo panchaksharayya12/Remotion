@@ -72,9 +72,9 @@ export default function SqueezeFillCanvas({
   const [showBoneLabels, setShowBoneLabels] = useState(true);
 
   // Continuous Movement Calibration Parameters
-  const [openRatioRo, setOpenRatioRo] = useState(1.90);
-  const [fistRatioRf, setFistRatioRf] = useState(0.85);
-  const [currentRatioR, setCurrentRatioR] = useState(1.90);
+  const [openRatioRo, setOpenRatioRo] = useState(1.45);
+  const [fistRatioRf, setFistRatioRf] = useState(0.55);
+  const [currentRatioR, setCurrentRatioR] = useState(1.40);
   const [closureC, setClosureC] = useState(0.0); // 0.0 (open) to 1.0 (clench)
   const [peakClosureInCycle, setPeakClosureInCycle] = useState(0.0);
   const [movementPhase, setMovementPhase] = useState('RESTING'); // 'RESTING', 'SQUEEZING', 'HOLDING_PEAK', 'RELEASING'
@@ -94,13 +94,16 @@ export default function SqueezeFillCanvas({
     detectionConfidence: 98.8
   });
 
-  // Internal physics refs
+  // Internal physics & dynamic calibration refs
   const waterLevelRef = useRef(0);
   const targetWaterLevelRef = useRef(0);
   const particlesRef = useRef([]);
   const ripplesRef = useRef([]);
   const landmarksRef = useRef(null);
   const simAngleRef = useRef(0);
+  const adaptiveMaxRef = useRef(1.40);
+  const adaptiveMinRef = useRef(0.55);
+  const spongeCoordsRef = useRef({ x: 280, y: 240 });
   const cycleStateRef = useRef({
     inSqueeze: false,
     peakC: 0.0,
@@ -118,7 +121,7 @@ export default function SqueezeFillCanvas({
     return () => clearInterval(timer);
   }, [isExerciseRunning, isComplete]);
 
-  // 2. MediaPipe HandLandmarker Setup with 21 Keypoints & Bone Detection
+  // 2. MediaPipe HandLandmarker Setup with 21 Keypoints & Bone Detection (Google AI Edge standard)
   useEffect(() => {
     let cameraInstance = null;
     let handsInstance = null;
@@ -133,8 +136,8 @@ export default function SqueezeFillCanvas({
           handsInstance.setOptions({
             maxNumHands: 1,
             modelComplexity: 1,
-            minDetectionConfidence: 0.55,
-            minTrackingConfidence: 0.55
+            minDetectionConfidence: 0.50,
+            minTrackingConfidence: 0.50
           });
 
           handsInstance.onResults((results) => {
@@ -143,25 +146,41 @@ export default function SqueezeFillCanvas({
               const landmarks = results.multiHandLandmarks[0];
               landmarksRef.current = landmarks;
 
-              // CONTINUOUS PALM RATIO ALGORITHM
+              // GOOGLE AI EDGE MEDIAPIPE 21-LANDMARK HAND CLOSURE & SQUEEZE
               const wrist = landmarks[0];
               const middleKnuckle = landmarks[9];
+              const indexKnuckle = landmarks[5];
+
+              // Palm center landmark (midpoint of wrist and middle MCP)
+              const palmCenterX = (wrist.x + middleKnuckle.x) / 2;
+              const palmCenterY = (wrist.y + middleKnuckle.y) / 2;
+
+              // Palm invariant bone reference scale (Wrist to Middle MCP)
               const P = Math.hypot(middleKnuckle.x - wrist.x, middleKnuckle.y - wrist.y);
 
-              const tipIndices = [4, 8, 12, 16, 20];
-              let sumDist = 0;
-              tipIndices.forEach(idx => {
-                const tip = landmarks[idx];
-                sumDist += Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
-              });
-              const D = sumDist / 5;
+              // Fingertips curl into the palm center (Landmark 4 curls towards MCP 5)
+              const dIndex = Math.hypot(landmarks[8].x - palmCenterX, landmarks[8].y - palmCenterY);
+              const dMiddle = Math.hypot(landmarks[12].x - palmCenterX, landmarks[12].y - palmCenterY);
+              const dRing = Math.hypot(landmarks[16].x - palmCenterX, landmarks[16].y - palmCenterY);
+              const dPinky = Math.hypot(landmarks[20].x - palmCenterX, landmarks[20].y - palmCenterY);
+              const dThumb = Math.hypot(landmarks[4].x - indexKnuckle.x, landmarks[4].y - indexKnuckle.y);
 
-              const R = P > 0.001 ? D / P : 1.9;
+              const D = (dIndex + dMiddle + dRing + dPinky + dThumb) / 5;
+              const R = P > 0.005 ? D / P : 1.35;
               setCurrentRatioR(parseFloat(R.toFixed(3)));
 
-              // Continuous Closure C = clamp((Ro - R) / (Ro - Rf), 0, 1)
-              const denom = openRatioRo - fistRatioRf;
-              const rawC = denom !== 0 ? (openRatioRo - R) / denom : 0;
+              // Dynamic Adaptive Auto-Calibration: Automatically expands observed range
+              if (R > adaptiveMaxRef.current) {
+                adaptiveMaxRef.current = Math.min(2.2, R);
+                setOpenRatioRo(parseFloat(adaptiveMaxRef.current.toFixed(2)));
+              }
+              if (R < adaptiveMinRef.current && R > 0.20) {
+                adaptiveMinRef.current = Math.max(0.35, R);
+                setFistRatioRf(parseFloat(adaptiveMinRef.current.toFixed(2)));
+              }
+
+              const span = Math.max(0.35, adaptiveMaxRef.current - adaptiveMinRef.current);
+              const rawC = (adaptiveMaxRef.current - R) / span;
               const C = Math.min(1.0, Math.max(0.0, rawC));
               setClosureC(parseFloat(C.toFixed(2)));
 
@@ -423,9 +442,24 @@ export default function SqueezeFillCanvas({
         ctx.restore();
       }
 
-      // C. REHABILITATION SPONGE (Continuous Compression)
-      const spongeX = 180;
-      const spongeY = 170;
+      // C. REHABILITATION SPONGE (Markerless AR Dynamic Hand Anchor & Continuous Compression)
+      let targetX = canvas.width * 0.35;
+      let targetY = canvas.height * 0.45;
+
+      if (isMarkerlessAR && landmarks && landmarks.length >= 21) {
+        // Mirrored X coordinate of palm center for natural mirror biofeedback
+        const palmX = (landmarks[0].x + landmarks[9].x) / 2;
+        const palmY = (landmarks[0].y + landmarks[9].y) / 2;
+        targetX = (1 - palmX) * canvas.width;
+        targetY = palmY * canvas.height;
+      }
+
+      // Smooth interpolation so sponge glides naturally with patient's palm
+      spongeCoordsRef.current.x += (targetX - spongeCoordsRef.current.x) * 0.25;
+      spongeCoordsRef.current.y += (targetY - spongeCoordsRef.current.y) * 0.25;
+
+      const spongeX = spongeCoordsRef.current.x - 60;
+      const spongeY = spongeCoordsRef.current.y - 70;
       const baseW = 120;
       const baseH = 140;
 
@@ -458,14 +492,14 @@ export default function SqueezeFillCanvas({
       ctx.fillText(
         `CLOSURE: ${closurePct}% (${closurePct >= 65 ? 'STRONG CLENCH' : closurePct >= 35 ? 'PARTIAL SQUEEZE' : 'OPEN HAND'})`,
         spongeX + baseW / 2,
-        345
+        Math.min(canvas.height - 20, drawY + squishY + 25)
       );
 
       // D. MEASURING BEAKER (Water Level Accumulates Continuously)
-      const beakerX = 380;
-      const beakerY = 130;
-      const beakerW = 110;
-      const beakerH = 250;
+      const beakerX = Math.round(canvas.width - 150);
+      const beakerY = Math.round(canvas.height * 0.18);
+      const beakerW = 100;
+      const beakerH = Math.round(canvas.height * 0.65);
 
       const waterHeight = beakerH * 0.85 * waterLevelRef.current;
       const waterTopY = (beakerY + beakerH - 8) - waterHeight;
@@ -509,9 +543,9 @@ export default function SqueezeFillCanvas({
       ctx.fillStyle = '#00d4ff';
       ctx.font = '12px Space Grotesk, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(`VOLUME: ${Math.round(waterLevelRef.current * 100)}%`, beakerX + beakerW / 2, 415);
+      ctx.fillText(`VOLUME: ${Math.round(waterLevelRef.current * 100)}%`, beakerX + beakerW / 2, beakerY + beakerH + 20);
 
-      // Droplets
+      // Droplets (Stream from Sponge to Beaker)
       for (let i = particlesRef.current.length - 1; i >= 0; i--) {
         const p = particlesRef.current[i];
         p.x += p.vx;
@@ -523,7 +557,7 @@ export default function SqueezeFillCanvas({
         ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         ctx.fill();
 
-        if (p.alpha <= 0 || p.y > 400) particlesRef.current.splice(i, 1);
+        if (p.alpha <= 0 || p.y > canvas.height) particlesRef.current.splice(i, 1);
       }
 
       // Ripples
@@ -685,9 +719,16 @@ export default function SqueezeFillCanvas({
     }, 280);
   };
 
-  // Keyboard Spacebar Simulation Fallback
+  // Keyboard Spacebar Simulation & Shift Key Emergency Exit
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Immediate emergency exit on Shift key press
+      if (e.key === 'Shift' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
+        e.preventDefault();
+        setIsExerciseRunning(false);
+        if (onExit) onExit();
+        return;
+      }
       if (e.code === 'Space' && !e.repeat) {
         handleSqueezeDown();
       }
@@ -705,19 +746,19 @@ export default function SqueezeFillCanvas({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [isExerciseRunning, isComplete, targetReps, elapsedSeconds]);
+  }, [isExerciseRunning, isComplete, onExit]);
 
   return (
-    <div className="w-full min-h-screen flex flex-col justify-between bg-[#070d18] border border-teal-500/30 rounded-2xl p-4 sm:p-6 shadow-2xl relative overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-[#060a14] w-screen h-screen flex flex-col justify-between p-3 sm:p-5 overflow-hidden select-none">
       {/* Exercise Control Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-3">
         <div>
           <div className="flex items-center space-x-2">
-            <h3 className="text-xl font-bold text-white font-display">
+            <h3 className="text-lg sm:text-xl font-bold text-white font-display">
               Squeeze & Fill — Hand Grasp Exercise
             </h3>
             <span className="text-[10px] font-mono bg-teal-950 text-teal-300 border border-teal-700 px-2 py-0.5 rounded-full">
-              Continuous Movement Scoring
+              Google AI Edge MediaPipe 21 Joints
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -725,12 +766,17 @@ export default function SqueezeFillCanvas({
           </p>
         </div>
 
-        {/* Start / Stop / Exit Controls */}
+        {/* Start / Stop / Exit Controls & Emergency Shift Badge */}
         <div className="flex items-center space-x-2.5">
+          <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-rose-950/80 border border-rose-500/70 text-rose-300 font-mono text-xs font-bold shadow-lg shadow-rose-950/40">
+            <ShieldAlert className="w-4 h-4 text-rose-400" />
+            <span>EMERGENCY EXIT: Press Shift Key</span>
+          </div>
+
           {!isExerciseRunning && !isComplete ? (
             <button
               onClick={() => setIsExerciseRunning(true)}
-              className="flex items-center space-x-1.5 px-6 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-lg shadow-teal-500/25 active:scale-95 transition-all cursor-pointer"
+              className="flex items-center space-x-1.5 px-5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-lg shadow-teal-500/25 active:scale-95 transition-all cursor-pointer"
             >
               <Play className="w-4 h-4 fill-current" />
               <span>Start Routine</span>
@@ -738,10 +784,10 @@ export default function SqueezeFillCanvas({
           ) : isExerciseRunning ? (
             <button
               onClick={() => setIsExerciseRunning(false)}
-              className="flex items-center space-x-1.5 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 active:scale-95 transition-all cursor-pointer"
             >
               <Pause className="w-4 h-4 fill-current" />
-              <span>Pause Routine</span>
+              <span>Pause</span>
             </button>
           ) : null}
 
@@ -750,16 +796,17 @@ export default function SqueezeFillCanvas({
               setIsExerciseRunning(false);
               if (onExit) onExit();
             }}
-            className="flex items-center space-x-1.5 px-4 py-2.5 rounded-xl bg-rose-600/90 hover:bg-rose-600 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition-all cursor-pointer"
+            className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md shadow-rose-600/30 transition-all cursor-pointer"
+            title="Press Shift key for instant Emergency Exit"
           >
             <ShieldAlert className="w-4 h-4" />
-            <span>Exit</span>
+            <span>Exit [Shift]</span>
           </button>
         </div>
       </div>
 
       {/* Feature Toggles: Markerless AR Mode, Bone Detector & Calibration Controls */}
-      <div className="my-3 p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div className="my-2 p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-2.5 text-xs">
         <div className="flex items-center space-x-2">
           <button
             onClick={() => setIsMarkerlessAR(!isMarkerlessAR)}
@@ -770,7 +817,7 @@ export default function SqueezeFillCanvas({
             }`}
           >
             <Eye className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Markerless AR: {isMarkerlessAR ? 'ON (Camera Passthrough)' : 'OFF (Studio VR)'}</span>
+            <span>Markerless AR: {isMarkerlessAR ? 'ON (Hand Dynamic Anchor)' : 'OFF (Studio VR)'}</span>
           </button>
 
           <button
@@ -790,14 +837,14 @@ export default function SqueezeFillCanvas({
         <div className="flex items-center space-x-2">
           <button
             onClick={calibrateOpenHand}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono border border-slate-700 transition-colors"
+            className="px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono border border-slate-700 transition-colors"
             title="Set current hand posture as open reference baseline"
           >
             Calibrate Open Hand
           </button>
           <button
             onClick={calibrateFist}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono border border-slate-700 transition-colors"
+            className="px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono border border-slate-700 transition-colors"
             title="Set current comfortable clench as fist target"
           >
             Calibrate Fist Clench
@@ -807,54 +854,54 @@ export default function SqueezeFillCanvas({
 
       {/* Live Calibration Alert Toast */}
       {calibrationNotice && (
-        <div className="mb-3 p-2.5 rounded-xl bg-teal-950/80 border border-teal-500/60 text-teal-300 text-xs font-mono flex items-center space-x-2 animate-fadeIn">
+        <div className="mb-2 p-2 rounded-xl bg-teal-950/80 border border-teal-500/60 text-teal-300 text-xs font-mono flex items-center space-x-2 animate-fadeIn">
           <CheckCircle2 className="w-4 h-4 text-teal-400" />
           <span>{calibrationNotice}</span>
         </div>
       )}
 
       {/* Real-time Telemetry Stats Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-3">
-        <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 text-center font-mono">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 my-2">
+        <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-center font-mono">
           <span className="text-[10px] text-slate-500 block uppercase">REPETITIONS</span>
-          <span className="text-xl font-bold text-white">
+          <span className="text-lg font-bold text-white">
             {repsCompleted} <span className="text-xs text-slate-400">/ {targetReps}</span>
           </span>
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 text-center font-mono">
+        <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-center font-mono">
           <span className="text-[10px] text-slate-500 block uppercase">DURATION</span>
-          <span className="text-xl font-bold text-teal-300">
+          <span className="text-lg font-bold text-teal-300">
             {Math.floor(elapsedSeconds / 60)}:{(elapsedSeconds % 60).toString().padStart(2, '0')}
           </span>
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 text-center font-mono">
+        <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-center font-mono">
           <span className="text-[10px] text-slate-500 block uppercase">ESTIMATED CLOSURE</span>
-          <span className="text-xl font-bold text-cyan-400">
+          <span className="text-lg font-bold text-cyan-400">
             {Math.round(closureC * 100)}%
           </span>
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 text-center font-mono">
+        <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-center font-mono">
           <span className="text-[10px] text-slate-500 block uppercase">TRACKING STATUS</span>
-          <span className="text-sm font-bold text-emerald-400 flex items-center justify-center space-x-1.5 mt-1">
+          <span className="text-xs font-bold text-emerald-400 flex items-center justify-center space-x-1.5 mt-0.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>{handDetected ? 'Hand Locked' : 'Searching...'}</span>
+            <span>{handDetected ? 'Hand Locked (Google AI Edge)' : 'Searching...'}</span>
           </span>
         </div>
       </div>
 
-      {/* Main Interactive Canvas Area */}
-      <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 flex flex-col justify-center items-center shadow-inner flex-1 w-full min-h-[440px] max-h-[66vh] select-none">
+      {/* Main Interactive Canvas Area (True Edge-to-Edge Full Screen) */}
+      <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 flex flex-col justify-center items-center shadow-inner flex-1 w-full min-h-0 select-none">
         <canvas
           ref={canvasRef}
-          width={640}
-          height={440}
+          width={960}
+          height={540}
           onPointerDown={handleSqueezeDown}
           onPointerUp={handleSqueezeUp}
           onPointerLeave={handleSqueezeUp}
-          className="w-full max-w-[640px] h-[440px] object-contain cursor-pointer active:scale-[0.99] transition-transform"
+          className="w-full h-full object-contain cursor-pointer active:scale-[0.99] transition-transform"
           title="Click and hold anywhere on the virtual sponge to squeeze, release to score!"
         />
 

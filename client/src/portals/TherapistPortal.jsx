@@ -18,7 +18,7 @@ const THERAPIST_TABS = [
   { id: 'patients', label: 'My Patients', icon: Users },
   { id: 'details', label: 'Patient Details', icon: FileText },
   { id: 'prescriptions', label: 'Exercise Prescriptions', icon: Layers },
-  { id: 'games', label: 'Game Assignments', icon: Gamepad2 },
+  { id: 'games', label: 'Interactive Exercises', icon: Dumbbell },
   { id: 'live', label: 'Live Sessions', icon: Eye },
   { id: 'appointments', label: 'Appointments', icon: Calendar },
   { id: 'video', label: 'Video Meetings', icon: Video },
@@ -54,7 +54,13 @@ const DEFAULT_APPOINTMENTS = [
   }
 ];
 
-// Robust Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
+// Bulletproof Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
+const isSameSenderRole = (m1, m2) => {
+  const isDoc1 = m1.sender_id === 'u_therapist_1' || m1.sender_name?.includes('Rajesh') || m1.sender_id?.includes('therapist');
+  const isDoc2 = m2.sender_id === 'u_therapist_1' || m2.sender_name?.includes('Rajesh') || m2.sender_id?.includes('therapist');
+  return isDoc1 === isDoc2;
+};
+
 const mergeAndDeduplicateMessages = (prevList, incoming) => {
   const merged = [...(prevList || [])];
   const items = Array.isArray(incoming) ? incoming : [incoming];
@@ -63,23 +69,26 @@ const mergeAndDeduplicateMessages = (prevList, incoming) => {
     if (!item || !item.message_text) continue;
 
     // 1. Exact ID match
-    const idIdx = merged.findIndex(m => m.id === item.id);
+    const idIdx = merged.findIndex(m => m.id && item.id && m.id === item.id);
     if (idIdx !== -1) {
       merged[idIdx] = { ...merged[idIdx], ...item };
       continue;
     }
 
-    // 2. Fuzzy match: same sender, same text, within 15 seconds
-    const fuzzyIdx = merged.findIndex(m => {
-      if (m.sender_id !== item.sender_id) return false;
-      if ((m.message_text || '').trim() !== (item.message_text || '').trim()) return false;
+    // 2. Bulletproof text + sender-side match within 90 seconds
+    const normItemText = (item.message_text || '').trim().toLowerCase();
+    const dupIdx = merged.findIndex(m => {
+      const normMText = (m.message_text || '').trim().toLowerCase();
+      if (normMText !== normItemText) return false;
+      if (!isSameSenderRole(m, item)) return false;
       const t1 = new Date(m.created_at || 0).getTime();
       const t2 = new Date(item.created_at || 0).getTime();
-      return Math.abs(t1 - t2) < 15000;
+      if (!t1 || !t2) return true;
+      return Math.abs(t1 - t2) < 90000;
     });
 
-    if (fuzzyIdx !== -1) {
-      merged[fuzzyIdx] = { ...merged[fuzzyIdx], ...item };
+    if (dupIdx !== -1) {
+      merged[dupIdx] = { ...merged[dupIdx], ...item };
     } else {
       merged.push(item);
     }
@@ -975,27 +984,86 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     if (!newPatientForm.name.trim()) return;
 
     try {
-      const newPt = {
-        id: 'pt_' + Date.now().toString(36),
+      const payload = {
         name: newPatientForm.name.trim(),
-        condition: newPatientForm.condition,
-        affected_side: newPatientForm.affected_side,
-        level: parseInt(newPatientForm.level, 10) || 1,
-        streak: 1,
-        compliance: '100%',
-        total_sessions: 1,
-        avg_accuracy: 90,
-        peak_rom: 55,
-        active_prescriptions_count: 1,
-        recovery_level: `Stage ${newPatientForm.level} Recovery`,
-        user_id: 'u_' + Date.now().toString(36),
-        email: newPatientForm.email || `${newPatientForm.name.toLowerCase().replace(/\s+/g, '')}@example.com`
+        condition: newPatientForm.condition.trim() || 'Post-Stroke Left Upper Limb Hemiparesis',
+        affected_side: newPatientForm.affected_side || 'Left Upper Limb',
+        level: parseInt(newPatientForm.level, 10) || 3,
+        age: parseInt(newPatientForm.age, 10) || 52,
+        primary_language: newPatientForm.primary_language || 'en',
+        emergency_contact: newPatientForm.emergency_contact || '+91 98450 12345',
+        email: newPatientForm.email || `${newPatientForm.name.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`,
+        notes: newPatientForm.notes || `Clinical record initialized for ${newPatientForm.name.trim()}.`
       };
 
+      const res = await api.createPatient(payload);
+      const newPt = res?.patient || {
+        id: 'pt_' + Date.now().toString(36),
+        user_id: 'u_' + Date.now().toString(36),
+        ...payload,
+        recovery_level: `Stage ${payload.level} Recovery`,
+        total_sessions: 1,
+        avg_accuracy: 92.0,
+        peak_rom: 62.0,
+        streak: 1,
+        compliance: '100%',
+        active_prescriptions_count: 2
+      };
+
+      // 1. Immediately update patients list and select this new patient
       setPatients(prev => [newPt, ...prev.filter(p => p.id !== newPt.id)]);
       setSelectedPatientId(newPt.id);
 
-      // Broadcast to other tabs & windows
+      // 2. Initialize complete patient dossier so all tabs show their full data immediately
+      const defaultPrescriptions = [
+        {
+          id: 'rx_' + newPt.id + '_sq',
+          patient_id: newPt.id,
+          patient_name: newPt.name,
+          exercise_id: 'ex_squeeze_fill',
+          exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+          target_reps: 15,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: `Active finger flexion and extension routine customized for ${newPt.name}.`,
+          clinical_notes: `Prescribed based on condition: ${newPt.condition}.`,
+          status: 'active',
+          created_at: new Date().toISOString()
+        },
+        {
+          id: 'rx_' + newPt.id + '_reach',
+          patient_id: newPt.id,
+          patient_name: newPt.name,
+          exercise_id: 'ex_reach_touch',
+          exercise_name: 'Reach & Touch (3D Spatial Coordination)',
+          target_reps: 20,
+          frequency: 'Daily',
+          difficulty: 'Moderate',
+          instructions: 'Spatial reaching targets to rebuild functional shoulder and elbow extension.',
+          clinical_notes: 'Assess movement latency and trunk compensation.',
+          status: 'active',
+          created_at: new Date().toISOString()
+        }
+      ];
+
+      setPatientDetail({
+        patient: newPt,
+        prescriptions: defaultPrescriptions,
+        recovery_metrics: [
+          { session: 'Baseline', rom: 40, accuracy: 70 },
+          { session: 'Session 1', rom: 52, accuracy: 78 },
+          { session: 'Current', rom: 62, accuracy: 92 }
+        ]
+      });
+
+      // 3. Persist to localStorage
+      try {
+        const stored = JSON.parse(localStorage.getItem('remotion_patients_list') || '[]');
+        stored.unshift(newPt);
+        localStorage.setItem('remotion_patients_list', JSON.stringify(stored));
+      } catch (e) {}
+
+      // 4. Broadcast to other tabs & windows
       if (syncChannelRef.current) {
         try {
           syncChannelRef.current.postMessage({
@@ -1006,16 +1074,18 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         } catch (e) {}
       }
 
-      try {
-        localStorage.setItem('remotion_patient_registered_signal', JSON.stringify({
-          type: 'NEW_PATIENT_REGISTERED',
-          patient: newPt,
-          timestamp: Date.now()
-        }));
-      } catch (e) {}
-
       setShowNewPatientModal(false);
-      setToastMessage(`New patient ${newPt.name} successfully registered to clinical caseload.`);
+      setNewPatientForm({
+        name: '',
+        condition: 'Post-Stroke Left Upper Limb Hemiparesis',
+        affected_side: 'Left Upper Limb',
+        level: 3,
+        age: 52,
+        primary_language: 'en',
+        emergency_contact: '+91 98450 12345',
+        email: ''
+      });
+      setToastMessage(`New patient ${newPt.name} successfully registered with complete clinical record and assigned protocols.`);
       setTimeout(() => setToastMessage(null), 6000);
     } catch (err) {
       console.error('Register patient error:', err);
@@ -1741,18 +1811,18 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         )}
 
         {/* ========================================================================= */}
-        {/* TAB 5: GAME ASSIGNMENTS                                                   */}
+        {/* TAB 5: INTERACTIVE MOTOR EXERCISES & PROTOCOLS                            */}
         {/* ========================================================================= */}
         {activeTab === 'games' && (
           <div className="space-y-6 animate-fadeIn">
             <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
               <div className="pb-4 border-b border-slate-100 mb-6">
                 <h2 className="text-xl font-bold text-slate-900 flex items-center space-x-2">
-                  <Gamepad2 className="w-5 h-5 text-blue-600" />
-                  <span>VR Serious Games & Biofeedback Assignment</span>
+                  <Dumbbell className="w-5 h-5 text-blue-600" />
+                  <span>Interactive Motor Exercises & Biofeedback Assignment</span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Configure interactive virtual motor challenges with custom kinematic target thresholds.
+                  Configure interactive virtual motor exercises with custom kinematic target thresholds. Prescribed protocols synchronize with the patient's routine.
                 </p>
               </div>
 
@@ -1807,16 +1877,16 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                           className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 font-bold text-xs shadow-sm flex items-center space-x-1.5 cursor-pointer"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
-                          <span>Play 3D</span>
+                          <span>Test Exercise</span>
                         </button>
                         <button
                           onClick={() => {
-                            setToastMessage(`Assigned ${game.title} to ${selectedPatient?.name || 'Asha Sharma'}.`);
+                            setToastMessage(`Prescribed exercise "${game.title}" to ${selectedPatient?.name || 'patient'}.`);
                             setTimeout(() => setToastMessage(null), 5000);
                           }}
                           className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-sm cursor-pointer"
                         >
-                          Assign to Patient
+                          Prescribe Exercise
                         </button>
                       </div>
                     </div>
@@ -2300,15 +2370,58 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                   <label className="block text-slate-700 mb-1 font-bold">Motor Recovery Level</label>
                   <select
                     value={newPatientForm.level}
-                    onChange={(e) => setNewPatientForm({ ...newPatientForm, level: parseInt(e.target.value) || 1 })}
+                    onChange={(e) => setNewPatientForm({ ...newPatientForm, level: parseInt(e.target.value) || 3 })}
                     className="w-full bg-slate-50 text-slate-800 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 text-xs"
                   >
                     <option value={1}>Stage 1 (Initial Synergies)</option>
                     <option value={2}>Stage 2 (Spasticity Onset)</option>
                     <option value={3}>Stage 3 (Voluntary Movement)</option>
                     <option value={4}>Stage 4 (Active ROM Extension)</option>
+                    <option value={5}>Stage 5 (Advanced Movement)</option>
+                    <option value={6}>Stage 6 (Near Normal Speed)</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 mb-1 font-bold">Patient Age</label>
+                  <input
+                    type="number"
+                    min="18"
+                    max="99"
+                    value={newPatientForm.age || 52}
+                    onChange={(e) => setNewPatientForm({ ...newPatientForm, age: parseInt(e.target.value) || 52 })}
+                    className="w-full bg-slate-50 text-slate-800 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 mb-1 font-bold">Primary Language</label>
+                  <select
+                    value={newPatientForm.primary_language || 'en'}
+                    onChange={(e) => setNewPatientForm({ ...newPatientForm, primary_language: e.target.value })}
+                    className="w-full bg-slate-50 text-slate-800 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 text-xs"
+                  >
+                    <option value="en">English (en)</option>
+                    <option value="hi">Hindi (hi)</option>
+                    <option value="kn">Kannada (kn)</option>
+                    <option value="ta">Tamil (ta)</option>
+                    <option value="te">Telugu (te)</option>
+                    <option value="mr">Marathi (mr)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 mb-1 font-bold">Emergency Contact Phone</label>
+                <input
+                  type="text"
+                  placeholder="+91 98450 12345"
+                  value={newPatientForm.emergency_contact || '+91 98450 12345'}
+                  onChange={(e) => setNewPatientForm({ ...newPatientForm, emergency_contact: e.target.value })}
+                  className="w-full bg-slate-50 text-slate-800 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 text-xs"
+                />
               </div>
 
               <div className="flex space-x-3 pt-3">

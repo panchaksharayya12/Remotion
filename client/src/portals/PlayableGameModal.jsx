@@ -242,10 +242,12 @@ export default function PlayableGameModal({ game, isOpen = true, onClose, onGame
     };
   }, [standardGameId, gameState, difficulty]);
 
-  // Close on Escape key
+  // Close on Escape or Shift key emergency exit
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && onClose) onClose();
+      if ((e.key === 'Shift' || e.key === 'Escape') && onClose) {
+        onClose();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);

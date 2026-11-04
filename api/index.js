@@ -368,10 +368,10 @@ export default async function handler(req, res) {
 
   // 1. Auth: Sign In
   if (pathname === '/auth/login' && req.method === 'POST') {
-    const { email, password } = body;
+    const { email, password, role: selectedRole } = body;
     const cleanEmail = (email || '').trim().toLowerCase();
 
-    // Check pre-configured demo users
+    // Check pre-configured users
     const matched = DEMO_USERS[cleanEmail];
     if (matched) {
       const token = 'remotion_tok_' + Buffer.from(cleanEmail).toString('base64');
@@ -382,11 +382,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // Dynamic fallback for any valid formatted email
+    // Dynamic login for custom credentials based on selected role
     if (cleanEmail.includes('@')) {
-      const fallbackRole = cleanEmail.includes('therapist') ? 'therapist' :
+      const fallbackRole = selectedRole || (cleanEmail.includes('therapist') ? 'therapist' :
                            cleanEmail.includes('admin') ? 'admin' :
-                           cleanEmail.includes('guest') || cleanEmail.includes('explorer') ? 'guest' : 'patient';
+                           cleanEmail.includes('guest') || cleanEmail.includes('explorer') ? 'guest' : 'patient');
       const user = {
         id: 'u_' + Date.now(),
         email: cleanEmail,
@@ -655,6 +655,54 @@ export default async function handler(req, res) {
     return res.status(200).json({ messages: filteredMessages });
   }
 
+  // 4c-2. Remo AI Companion Rehabilitation Assistant
+  if (pathname === '/remo/chat' || pathname.startsWith('/remo/chat')) {
+    const userMsg = (body.message || '').trim().toLowerCase();
+    const lang = body.language || 'en';
+    
+    let reply = '';
+    let mascotState = 'encouraging';
+
+    if (userMsg.includes('hi') || userMsg.includes('hello') || userMsg.includes('hey') || userMsg.includes('namaste')) {
+      if (lang === 'kn') {
+        reply = 'ನಮಸ್ಕಾರ! ನಾನು ರೆಮೋ, ನಿಮ್ಮ ಪುನರ್ವಸತಿ ಸಹಾಯಕ. ಇಂದಿನ ಮೋಟಾರ್ ವ್ಯಾಯಾಮ ಅಥವಾ ಥೆರಪಿಸ್ಟ್ ಸಮಾಲೋಚನೆಗೆ ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?';
+      } else if (lang === 'hi') {
+        reply = 'नमस्ते! मैं रेमो हूँ, आपका पुनर्वास सहायक। आज मैं आपके व्यायाम और रिकवरी में कैसे मदद कर सकता हूँ?';
+      } else {
+        reply = 'Hello! I am Remo, your rehabilitation companion. How can I assist your upper-limb recovery and exercises today?';
+      }
+      mascotState = 'happy';
+    } else if (userMsg.includes('squeeze') || userMsg.includes('sponge') || userMsg.includes('grip') || userMsg.includes('hand')) {
+      if (lang === 'kn') {
+        reply = 'ಸ್ಕ್ವೀಜ್ ಮತ್ತು ಫಿಲ್ ವ್ಯಾಯಾಮ: ನಿಮ್ಮ ಕೈಯನ್ನು ಕ್ಯಾಮರಾ ಮುಂದೆ ತೆರೆದು, ನಂತರ ಬೆರಳುಗಳನ್ನು ನಿಧಾನವಾಗಿ ಒಳಕ್ಕೆ ಮಡಚಿ ಸ್ಪಂಜನ್ನು ಒತ್ತಿ. ಇದು ಬೆರಳುಗಳ ಚಲನೆ ಮತ್ತು ಬಲವನ್ನು ಹೆಚ್ಚಿಸುತ್ತದೆ.';
+      } else if (lang === 'hi') {
+        reply = 'स्क्वीज़ एंड फिल व्यायाम: अपने हाथ को पूरा खोलें और फिर धीरे-धीरे मुट्ठी भींचें। यह उंगलियों की सक्रिय गति और पकड़ शक्ति को बढ़ाता है।';
+      } else {
+        reply = 'Squeeze & Fill Exercise: Position your hand in front of the camera, open your fingers fully, and slowly clench into a fist to compress the virtual sponge. This strengthens flexor muscles and restores functional grip.';
+      }
+      mascotState = 'encouraging';
+    } else if (userMsg.includes('reach') || userMsg.includes('touch') || userMsg.includes('shoulder')) {
+      reply = 'Reach & Touch Exercise: Extend your affected arm towards the 3D illuminated targets. Focus on keeping your shoulder relaxed without compensatory trunk lean. Dr. Rajesh monitors your spatial accuracy and range of motion.';
+      mascotState = 'encouraging';
+    } else if (userMsg.includes('pain') || userMsg.includes('hurt') || userMsg.includes('tired') || userMsg.includes('fatigue')) {
+      reply = 'Clinical Notice: If you experience acute pain (above 3/10) or significant fatigue, please stop the exercise immediately, rest your arm on a supported surface, and alert Dr. Rajesh via Clinician Chat.';
+      mascotState = 'concerned';
+    } else if (userMsg.includes('vr') || userMsg.includes('headset') || userMsg.includes('quest')) {
+      reply = 'To use VR mode: Put on your Meta Quest 3 or Apple Vision Pro headset, open the browser, and navigate to this workspace. Click "Enter VR" to engage immersive 6DOF rehabilitation!';
+      mascotState = 'encouraging';
+    } else {
+      if (lang === 'kn') {
+        reply = 'ನಿಮ್ಮ ಚೇತರಿಕೆಯ ಗುರಿಗಳನ್ನು ತಲುಪಲು ನಿಮ್ಮ ದೈನಂದಿನ ಸೂಚಿತ ವ್ಯಾಯಾಮಗಳನ್ನು ಪೂರ್ಣಗೊಳಿಸಿ. ಹೆಚ್ಚಿನ ಮಾರ್ಗದರ್ಶನಕ್ಕಾಗಿ ಡಾ. ರಾಜೇಶ್ ಅವರೊಂದಿಗೆ ವೀಡಿಯೊ ಸಮಾಲೋಚನೆ ಪ್ರಾರಂಭಿಸಿ.';
+      } else if (lang === 'hi') {
+        reply = 'अपनी दैनिक फिजियोथेरेपी समय पर पूरी करें। उंगलियों और बांह के समन्वय में सुधार हो रहा है। किसी भी सवाल के लिए क्लिनिशियन चैट का उपयोग करें।';
+      } else {
+        reply = 'I am here to guide your rehabilitation. Complete your daily prescribed exercises (Squeeze & Fill and Reach & Touch), track your ROM progress, or connect with Dr. Rajesh via Video Meeting.';
+      }
+    }
+
+    return res.status(200).json({ success: true, reply, mascotState });
+  }
+
   // 4d. Rehabilitation Games Catalog (Full 3D WebGL Games)
   if (pathname === '/games' || pathname.startsWith('/games')) {
     const gId = pathname.replace('/games/', '').replace('/games', '').trim();
@@ -715,8 +763,99 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, alerts: pendingAlerts });
   }
 
-  // 5. Therapist Patients Caseload
+  // 5. Therapist Patients Caseload & Registration
   if (pathname === '/therapist/patients') {
+    if (req.method === 'POST') {
+      const {
+        name,
+        condition = 'Post-Stroke Left Upper Limb Hemiparesis',
+        affected_side = 'Left Upper Limb',
+        level = 3,
+        age = 52,
+        gender = 'Not Specified',
+        primary_language = 'en',
+        emergency_contact = '+91 98450 12345',
+        email = '',
+        notes = ''
+      } = body;
+
+      const newId = 'pt_' + Date.now().toString(36);
+      const newPt = {
+        id: newId,
+        user_id: 'u_' + newId,
+        name: (name || 'New Patient').trim(),
+        age: Number(age) || 52,
+        gender: gender || 'Not Specified',
+        condition: (condition || 'Post-Stroke Left Upper Limb Hemiparesis').trim(),
+        recovery_level: typeof level === 'string' && level.includes('Stage') ? level : `Stage ${level} Recovery`,
+        affected_side: affected_side || 'Left Upper Limb',
+        primary_language: primary_language || 'en',
+        emergency_contact: emergency_contact || '+91 98450 12345',
+        total_sessions: 1,
+        avg_accuracy: 92.0,
+        peak_rom: 62.0,
+        level: Number(parseInt(level, 10)) || 3,
+        streak: 1,
+        compliance: '100%',
+        active_prescriptions_count: 2,
+        email: email || `${(name || 'patient').toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com`,
+        notes: notes || `Clinical record initialized for ${(name || 'Patient').trim()}. Condition: ${condition}.`,
+        created_at: new Date().toISOString()
+      };
+
+      PATIENTS.unshift(newPt);
+
+      // Tailored default prescriptions for this patient
+      const ex1 = {
+        id: 'rx_' + newId + '_sq',
+        patient_id: newId,
+        patient_name: newPt.name,
+        exercise_id: 'ex_squeeze_fill',
+        exercise_name: 'Squeeze & Fill (Hand Grasp & ROM)',
+        target_reps: 15,
+        frequency: 'Daily',
+        difficulty: 'Moderate',
+        instructions: `Active finger flexion and extension routine customized for ${newPt.name}.`,
+        clinical_notes: `Prescribed based on condition: ${newPt.condition}.`,
+        status: 'active',
+        created_at: new Date().toISOString()
+      };
+
+      const ex2 = {
+        id: 'rx_' + newId + '_reach',
+        patient_id: newId,
+        patient_name: newPt.name,
+        exercise_id: 'ex_reach_touch',
+        exercise_name: 'Reach & Touch (3D Spatial Coordination)',
+        target_reps: 20,
+        frequency: 'Daily',
+        difficulty: 'Moderate',
+        instructions: 'Spatial reaching targets to rebuild functional shoulder and elbow extension.',
+        clinical_notes: 'Assess movement latency and trunk compensation.',
+        status: 'active',
+        created_at: new Date().toISOString()
+      };
+
+      PRESCRIPTIONS.unshift(ex1, ex2);
+
+      // Baseline evaluation session
+      SESSIONS.unshift({
+        id: 'sess_' + newId + '_base',
+        patient_id: newId,
+        patient_name: newPt.name,
+        exercise_id: 'ex_squeeze_fill',
+        exercise_name: 'Squeeze & Fill',
+        start_time: new Date().toISOString(),
+        duration_seconds: 120,
+        repetitions_completed: 10,
+        accuracy_pct: 88,
+        range_of_motion_deg: 55,
+        notes: 'Initial clinical assessment baseline established.'
+      });
+
+      return res.status(200).json({ success: true, patient: newPt, patients: PATIENTS });
+    }
+
     return res.status(200).json({ patients: PATIENTS });
   }
 

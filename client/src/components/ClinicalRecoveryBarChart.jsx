@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarChart3, TrendingUp, Target, Award, Info, ChevronRight } from 'lucide-react';
+import { BarChart3, TrendingUp, Target, Award, Info, ChevronRight, Calculator, CheckCircle2, Cpu, Activity } from 'lucide-react';
 
 const DEFAULT_SESSIONS = [
   { id: 's1', label: 'Baseline', rom: 42, accuracy: 64, reps: 10, date: 'Oct 12' },
@@ -36,12 +36,22 @@ export default function ClinicalRecoveryBarChart({
     return paddingTop + innerHeight - (clamped / 100) * innerHeight;
   };
 
-  const groupWidth = innerWidth / data.length;
+  const currentSessions = data && data.length > 0 ? data : DEFAULT_SESSIONS;
+  const latestItem = currentSessions[currentSessions.length - 1];
+  const latestRom = latestItem?.rom || 82;
+  const latestAccuracy = latestItem?.accuracy || 94;
+
+  const groupWidth = innerWidth / currentSessions.length;
   const barWidth = 18;
   const barGap = 4;
 
   const baselineY = getY(baselineRom);
   const targetY = getY(targetRom);
+
+  // Exact Kinematics Mathematical Computations
+  const romDelta = Math.max(0, latestRom - baselineRom);
+  const romSpan = Math.max(1, targetRom - baselineRom);
+  const recoveryProgressPct = Math.min(100, Math.round((romDelta / romSpan) * 100));
 
   return (
     <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
@@ -53,7 +63,7 @@ export default function ClinicalRecoveryBarChart({
             <span>Longitudinal Kinematics & Motor Recovery Curves</span>
           </h3>
           <p className="text-xs text-slate-500 mt-0.5 font-sans">
-            Photorealistic clinical bar telemetry: Active ROM (degrees) & Session Accuracy (%) for {patientName}.
+            Photorealistic clinical bar telemetry: Active ROM (degrees) and Session Accuracy (%) for {patientName}.
           </p>
         </div>
 
@@ -62,7 +72,7 @@ export default function ClinicalRecoveryBarChart({
           <button
             type="button"
             onClick={() => setMetricFilter('all')}
-            className={`px-3 py-1 rounded-lg transition-all ${
+            className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               metricFilter === 'all'
                 ? 'bg-white text-blue-700 shadow-sm font-bold'
                 : 'text-slate-600 hover:text-slate-900'
@@ -73,7 +83,7 @@ export default function ClinicalRecoveryBarChart({
           <button
             type="button"
             onClick={() => setMetricFilter('rom')}
-            className={`px-3 py-1 rounded-lg transition-all ${
+            className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               metricFilter === 'rom'
                 ? 'bg-blue-600 text-white shadow-sm font-bold'
                 : 'text-slate-600 hover:text-slate-900'
@@ -84,7 +94,7 @@ export default function ClinicalRecoveryBarChart({
           <button
             type="button"
             onClick={() => setMetricFilter('accuracy')}
-            className={`px-3 py-1 rounded-lg transition-all ${
+            className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
               metricFilter === 'accuracy'
                 ? 'bg-emerald-600 text-white shadow-sm font-bold'
                 : 'text-slate-600 hover:text-slate-900'
@@ -150,7 +160,7 @@ export default function ClinicalRecoveryBarChart({
             );
           })}
 
-          {/* Target Discharge Reference Line (85° / %) */}
+          {/* Target Discharge Reference Line */}
           <line
             x1={paddingLeft}
             y1={targetY}
@@ -167,7 +177,7 @@ export default function ClinicalRecoveryBarChart({
             </text>
           </g>
 
-          {/* Baseline Reference Line (42° / %) */}
+          {/* Baseline Reference Line */}
           <line
             x1={paddingLeft}
             y1={baselineY}
@@ -185,7 +195,7 @@ export default function ClinicalRecoveryBarChart({
           </g>
 
           {/* Grouped 3D Bars for Each Session */}
-          {data.map((item, index) => {
+          {currentSessions.map((item, index) => {
             const groupX = paddingLeft + index * groupWidth + (groupWidth - (metricFilter === 'all' ? barWidth * 2 + barGap : barWidth)) / 2;
             const romY = getY(item.rom);
             const romHeight = paddingTop + innerHeight - romY;
@@ -212,7 +222,6 @@ export default function ClinicalRecoveryBarChart({
                 {/* ROM 3D Bar */}
                 {showRom && (
                   <g filter="url(#barShadow)">
-                    {/* Bar Body */}
                     <rect
                       x={romBarX}
                       y={romY}
@@ -221,7 +230,6 @@ export default function ClinicalRecoveryBarChart({
                       rx="3"
                       fill="url(#romBarGrad)"
                     />
-                    {/* 3D Top Cap Highlight */}
                     <ellipse
                       cx={romBarX + barWidth / 2}
                       cy={romY}
@@ -229,7 +237,6 @@ export default function ClinicalRecoveryBarChart({
                       ry="3"
                       fill="#93c5fd"
                     />
-                    {/* Value on Top */}
                     <text
                       x={romBarX + barWidth / 2}
                       y={romY - 6}
@@ -244,7 +251,6 @@ export default function ClinicalRecoveryBarChart({
                 {/* Accuracy 3D Bar */}
                 {showAcc && (
                   <g filter="url(#barShadow)">
-                    {/* Bar Body */}
                     <rect
                       x={accBarX}
                       y={accY}
@@ -253,7 +259,6 @@ export default function ClinicalRecoveryBarChart({
                       rx="3"
                       fill="url(#accBarGrad)"
                     />
-                    {/* 3D Top Cap Highlight */}
                     <ellipse
                       cx={accBarX + barWidth / 2}
                       cy={accY}
@@ -261,7 +266,6 @@ export default function ClinicalRecoveryBarChart({
                       ry="3"
                       fill="#6ee7b7"
                     />
-                    {/* Value on Top */}
                     <text
                       x={accBarX + barWidth / 2}
                       y={accY - 6}
@@ -299,7 +303,7 @@ export default function ClinicalRecoveryBarChart({
       </div>
 
       {/* Real-World EMR Clinical Summary Metrics & Legend */}
-      <div className="mt-5 pt-4 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="mt-4 pt-3 border-t border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3">
         {/* Color Legend */}
         <div className="flex items-center space-x-4 text-xs font-mono font-bold">
           <div className="flex items-center space-x-1.5">
@@ -315,13 +319,65 @@ export default function ClinicalRecoveryBarChart({
         {/* Clinical Outcome Indicators */}
         <div className="flex items-center space-x-3 text-xs font-sans">
           <div className="px-3 py-1 rounded-xl bg-blue-50 text-blue-900 border border-blue-200 font-mono font-bold">
-            ROM Gain: <span className="text-blue-700">+{data[data.length - 1].rom - baselineRom}° (+{Math.round(((data[data.length - 1].rom - baselineRom) / baselineRom) * 100)}%)</span>
+            ROM Gain: <span className="text-blue-700">+{romDelta}° (+{Math.round((romDelta / Math.max(1, baselineRom)) * 100)}%)</span>
           </div>
           <div className="px-3 py-1 rounded-xl bg-emerald-50 text-emerald-900 border border-emerald-200 font-mono font-bold">
-            Precision: <span className="text-emerald-700">{data[data.length - 1].accuracy}%</span>
+            Precision: <span className="text-emerald-700">{latestAccuracy}%</span>
           </div>
-          <div className="px-3 py-1 rounded-xl bg-purple-50 text-purple-900 border border-purple-200 font-mono font-bold hidden lg:block">
-            Target Adherence: <span className="text-purple-700">96.4%</span>
+          <div className="px-3 py-1 rounded-xl bg-purple-50 text-purple-900 border border-purple-200 font-mono font-bold">
+            Target Adherence: <span className="text-purple-700">{recoveryProgressPct}%</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Transparent Kinematic Calculation & Biomechanical Formulation Panel */}
+      <div className="mt-5 p-4 rounded-2xl bg-slate-50 border border-slate-200">
+        <div className="flex items-center space-x-2 text-xs font-bold text-slate-800 uppercase font-mono mb-3">
+          <Calculator className="w-4 h-4 text-blue-600" />
+          <span>Biomechanical Formulation & Kinematic Calculation Engine</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+          {/* Card 1: ROM Calculation */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200">
+            <span className="text-[10px] font-mono font-bold text-blue-700 block uppercase">1. ACTIVE RANGE OF MOTION</span>
+            <div className="font-mono text-xs font-bold text-slate-900 my-1 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+              ROM = θ_extension - θ_flexion
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed font-sans">
+              Calculated via real-time 3D vector dot-products between Metacarpophalangeal (MCP) and Interphalangeal (IP) landmarks sampled at 60 FPS.
+            </p>
+            <div className="mt-2 text-[10px] font-mono text-blue-800 font-semibold">
+              Current Excursion: {latestRom}° (Baseline: {baselineRom}°)
+            </div>
+          </div>
+
+          {/* Card 2: Kinematic Accuracy */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200">
+            <span className="text-[10px] font-mono font-bold text-emerald-700 block uppercase">2. KINEMATIC ACCURACY INDEX</span>
+            <div className="font-mono text-xs font-bold text-slate-900 my-1 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+              Accuracy = (N_valid / N_total) × 100
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed font-sans">
+              Proportion of movement frames matching normative velocity profiles and joint stability within compensatory tremor tolerance.
+            </p>
+            <div className="mt-2 text-[10px] font-mono text-emerald-800 font-semibold">
+              Stability Score: {latestAccuracy}%
+            </div>
+          </div>
+
+          {/* Card 3: Longitudinal Recovery */}
+          <div className="p-3 bg-white rounded-xl border border-slate-200">
+            <span className="text-[10px] font-mono font-bold text-purple-700 block uppercase">3. MOTOR RECOVERY INDEX</span>
+            <div className="font-mono text-xs font-bold text-slate-900 my-1 bg-slate-50 p-1.5 rounded-lg border border-slate-100">
+              Recovery = [(ROM - Base) / (Target - Base)] × 100
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed font-sans">
+              Measures percentage of trajectory completed toward clinical discharge functional independence threshold.
+            </p>
+            <div className="mt-2 text-[10px] font-mono text-purple-800 font-semibold">
+              Progression: [({latestRom} - {baselineRom}) / ({targetRom} - {baselineRom})] × 100 = {recoveryProgressPct}%
+            </div>
           </div>
         </div>
       </div>

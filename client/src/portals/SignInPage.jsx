@@ -120,7 +120,7 @@ export default function SignInPage({ onAuthSuccess, onNavigateRegister }) {
     setForgotNotice(false);
 
     try {
-      const res = await api.login(email.trim(), password);
+      const res = await api.login(email.trim(), password, selectedRole);
       setLoading(false);
       onAuthSuccess(res.user);
     } catch (err) {
