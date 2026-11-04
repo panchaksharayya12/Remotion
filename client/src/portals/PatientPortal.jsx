@@ -215,11 +215,10 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       }));
     } catch (e) {}
 
-    // 4. Fast cross-browser cloud SSE dispatch via ntfy.sh (<50ms between Edge, Chrome, Safari)
+    // 4. Fast cross-browser cloud dispatch via ntfy.sh (<50ms between Edge, Chrome, Safari)
     try {
       fetch('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'IMMEDIATE_START_CALL',
           callerRole: 'patient',
@@ -308,6 +307,28 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     };
     window.addEventListener('storage', handleStorageEvent);
 
+    // Active localStorage polling fallback (every 400ms)
+    const localSignalPoll = setInterval(() => {
+      try {
+        const raw = localStorage.getItem('remotion_telehealth_call_signal');
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient' && (Date.now() - data.timestamp < 35000)) {
+            setIncomingCall(prev => {
+              if (prev && prev.roomId === data.meeting?.room_id) return prev;
+              playRingChime();
+              return {
+                callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
+                meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+                roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                meeting: data.meeting
+              };
+            });
+          }
+        }
+      } catch (e) {}
+    }, 400);
+
     // 3. Fast cross-browser SSE listener via ntfy.sh (bridges Edge to Chrome in <50ms)
     let sseSource = null;
     try {
@@ -332,24 +353,57 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       };
     } catch (e) {}
 
+    // Active ntfy.sh JSON Polling fallback
+    const ntfyPollInterval = setInterval(async () => {
+      try {
+        const res = await fetch('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1/json?since=20s');
+        const text = await res.text();
+        const lines = text.trim().split('\n');
+        for (const line of lines) {
+          if (!line) continue;
+          try {
+            const raw = JSON.parse(line);
+            if (raw.event === 'message' && raw.message) {
+              const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+              if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'patient') {
+                setIncomingCall(prev => {
+                  if (prev && prev.roomId === data.meeting?.room_id) return prev;
+                  playRingChime();
+                  return {
+                    callerName: data.callerName || 'Dr. Rajesh Kulkarni, PT',
+                    meetingTitle: data.meeting?.title || 'Clinical Video Review & Evaluation',
+                    roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                    meeting: data.meeting
+                  };
+                });
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }, 1000);
+
     // 4. Polling Serverless call alert API
     let alertPollInterval = setInterval(async () => {
       try {
-        const res = await api.getCallAlerts('patient', Date.now() - 5000);
+        const res = await api.getCallAlerts('patient', 'patient');
         if (res?.alerts && res.alerts.length > 0) {
           const latest = res.alerts[res.alerts.length - 1];
           if (latest.callerRole !== 'patient') {
-            playRingChime();
-            setIncomingCall({
-              callerName: latest.callerName || 'Dr. Rajesh Kulkarni, PT',
-              meetingTitle: latest.meeting?.title || 'Clinical Video Review & Evaluation',
-              roomId: latest.meeting?.room_id || 'remotion-room-pt_1',
-              meeting: latest.meeting
+            setIncomingCall(prev => {
+              if (prev && prev.roomId === latest.meeting?.room_id) return prev;
+              playRingChime();
+              return {
+                callerName: latest.callerName || 'Dr. Rajesh Kulkarni, PT',
+                meetingTitle: latest.meeting?.title || 'Clinical Video Review & Evaluation',
+                roomId: latest.meeting?.room_id || 'remotion-room-pt_1',
+                meeting: latest.meeting
+              };
             });
           }
         }
       } catch (err) {}
-    }, 1500);
+    }, 800);
 
     // 3. Socket.IO listeners
     let handlePrescriptionCreated = null;
@@ -420,6 +474,8 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       if (sseSource) {
         try { sseSource.close(); } catch (e) {}
       }
+      if (ntfyPollInterval) clearInterval(ntfyPollInterval);
+      if (localSignalPoll) clearInterval(localSignalPoll);
       if (alertPollInterval) clearInterval(alertPollInterval);
       window.removeEventListener('storage', handleStorageEvent);
       if (api.socket) {

@@ -622,9 +622,9 @@ class ApiService {
     }
   }
 
-  async getCallAlerts(targetRole, since = 0) {
+  async getCallAlerts(targetRole, excludeCallerRole = '') {
     try {
-      return await this.request(`/telehealth/call-alert?targetRole=${encodeURIComponent(targetRole)}&since=${since}`);
+      return await this.request(`/telehealth/call-alert?targetRole=${encodeURIComponent(targetRole)}&excludeCallerRole=${encodeURIComponent(excludeCallerRole)}`);
     } catch (e) {
       return { success: false, alerts: [] };
     }

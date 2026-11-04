@@ -310,9 +310,12 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
         console.log('[TherapistPortal] Telehealth call auto-initiated by patient:', data.meeting);
         playRingChime();
-        setSelectedMeeting(data.meeting);
-        setToastMessage(`Patient ${data.callerName || 'Asha Sharma'} joined the video room. Connecting...`);
-        setTimeout(() => setToastMessage(null), 6000);
+        setIncomingCall({
+          callerName: data.callerName || 'Asha Sharma (Patient)',
+          meetingTitle: data.meeting?.title || 'Clinical Video Review & Telehealth',
+          roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+          meeting: data.meeting
+        });
       } else if (data.type === 'APPOINTMENT_SCHEDULED' && data.appointment) {
         setAppointments(prev => [data.appointment, ...prev.filter(a => a.id !== data.appointment.id)]);
       } else if (data.type === 'CHAT_MESSAGE' && data.message) {
@@ -333,7 +336,12 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           const data = JSON.parse(e.newValue);
           if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
             playRingChime();
-            setSelectedMeeting(data.meeting);
+            setIncomingCall({
+              callerName: data.callerName || 'Asha Sharma (Patient)',
+              meetingTitle: data.meeting?.title || 'Clinical Video Review & Telehealth',
+              roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+              meeting: data.meeting
+            });
           }
         } catch (err) {}
       } else if (e.key === 'remotion_chat_sync_signal' && e.newValue) {
@@ -347,6 +355,28 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     };
     window.addEventListener('storage', handleStorageEvent);
 
+    // Active localStorage polling fallback (every 400ms)
+    const localSignalPoll = setInterval(() => {
+      try {
+        const raw = localStorage.getItem('remotion_telehealth_call_signal');
+        if (raw) {
+          const data = JSON.parse(raw);
+          if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist' && (Date.now() - data.timestamp < 35000)) {
+            setIncomingCall(prev => {
+              if (prev && prev.roomId === data.meeting?.room_id) return prev;
+              playRingChime();
+              return {
+                callerName: data.callerName || 'Asha Sharma (Patient)',
+                meetingTitle: data.meeting?.title || 'Clinical Video Review & Telehealth',
+                roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                meeting: data.meeting
+              };
+            });
+          }
+        }
+      } catch (e) {}
+    }, 400);
+
     // 3. Fast cross-browser SSE listener via ntfy.sh (bridges Edge to Chrome in <50ms)
     let sseSource = null;
     try {
@@ -359,30 +389,71 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
             if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
               console.log('[TherapistPortal SSE] Incoming patient call:', data);
               playRingChime();
-              setSelectedMeeting(data.meeting);
-              setToastMessage(`Patient ${data.callerName || 'Asha Sharma'} initiated video call. Connecting...`);
-              setTimeout(() => setToastMessage(null), 6000);
+              setIncomingCall({
+                callerName: data.callerName || 'Asha Sharma (Patient)',
+                meetingTitle: data.meeting?.title || 'Clinical Video Review & Telehealth',
+                roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                meeting: data.meeting
+              });
             }
           }
         } catch (err) {}
       };
     } catch (e) {}
 
+    // Active ntfy.sh JSON Polling fallback
+    const ntfyPollInterval = setInterval(async () => {
+      try {
+        const res = await fetch('https://ntfy.sh/remotion_telehealth_alert_therapist_pt_1/json?since=20s');
+        const text = await res.text();
+        const lines = text.trim().split('\n');
+        for (const line of lines) {
+          if (!line) continue;
+          try {
+            const raw = JSON.parse(line);
+            if (raw.event === 'message' && raw.message) {
+              const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
+              if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
+                setIncomingCall(prev => {
+                  if (prev && prev.roomId === data.meeting?.room_id) return prev;
+                  playRingChime();
+                  return {
+                    callerName: data.callerName || 'Asha Sharma (Patient)',
+                    meetingTitle: data.meeting?.title || 'Clinical Video Review & Telehealth',
+                    roomId: data.meeting?.room_id || 'remotion-room-pt_1',
+                    meeting: data.meeting
+                  };
+                });
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }, 1000);
+
     // 4. Polling Serverless call alert API
     let alertPollInterval = setInterval(async () => {
       try {
-        const res = await api.getCallAlerts('therapist', Date.now() - 5000);
+        const res = await api.getCallAlerts('therapist', 'therapist');
         if (res?.alerts && res.alerts.length > 0) {
           const latest = res.alerts[res.alerts.length - 1];
           if (latest.callerRole !== 'therapist') {
-            playRingChime();
-            setSelectedMeeting(latest.meeting);
+            setIncomingCall(prev => {
+              if (prev && prev.roomId === latest.meeting?.room_id) return prev;
+              playRingChime();
+              return {
+                callerName: latest.callerName || 'Asha Sharma (Patient)',
+                meetingTitle: latest.meeting?.title || 'Clinical Video Review & Telehealth',
+                roomId: latest.meeting?.room_id || 'remotion-room-pt_1',
+                meeting: latest.meeting
+              };
+            });
           }
         }
       } catch (err) {}
-    }, 1500);
+    }, 800);
 
-    // 3. Socket.IO listeners
+    // 5. Socket.IO listeners
     let handleSocketIncoming = null;
     let handlePatientSession = null;
     if (api.socket) {
@@ -397,12 +468,11 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       handleSocketIncoming = (callData) => {
         console.log('[TherapistPortal] Incoming patient telehealth call from socket:', callData);
         playRingChime();
-        const incomingMeeting = {
-          title: callData.meetingTitle || 'Clinical Telehealth Consultation',
-          scheduled_time: 'Now (Immediate Telehealth)',
-          room_id: callData.roomId || `remotion-room-${selectedPatientId || 'pt_1'}`
-        };
-        setSelectedMeeting(incomingMeeting);
+        setIncomingCall({
+          callerName: callData.callerName || 'Asha Sharma (Patient)',
+          meetingTitle: callData.meetingTitle || 'Clinical Telehealth Consultation',
+          roomId: callData.roomId || `remotion-room-${selectedPatientId || 'pt_1'}`
+        });
       };
 
       api.socket.on('patient_session_completed', handlePatientSession);
@@ -416,6 +486,8 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       if (sseSource) {
         try { sseSource.close(); } catch (e) {}
       }
+      if (ntfyPollInterval) clearInterval(ntfyPollInterval);
+      if (localSignalPoll) clearInterval(localSignalPoll);
       if (alertPollInterval) clearInterval(alertPollInterval);
       window.removeEventListener('storage', handleStorageEvent);
       if (api.socket) {
@@ -660,14 +732,14 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           </div>
         )}
 
-        {/* Appointments / Video Consultations Tab View */}
-        {(activeTab === 'appointments' || activeTab === 'video') && (
+        {/* Upcoming Telehealth & Scheduled Consultations Banner (Visible on Overview, Appointments & Video Tabs) */}
+        {(activeTab === 'overview' || activeTab === 'appointments' || activeTab === 'video') && (
           <div className="mb-8 p-6 rounded-3xl bg-white border border-slate-200 shadow-xl animate-fadeIn">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-4 mb-5">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 flex items-center space-x-2">
                   <Video className="w-5 h-5 text-blue-600" />
-                  <span>Clinical Telehealth & Video Consultation Suite</span>
+                  <span>{activeTab === 'overview' ? 'Upcoming Scheduled Telehealth Consultations' : 'Clinical Telehealth & Video Consultation Suite'}</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Direct peer-to-peer WebRTC video stream with real-time MediaPipe kinematics, live speech translation, and electronic record logging.
@@ -762,7 +834,8 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           </div>
         )}
 
-        {/* 2-Column Clinical Layout */}
+        {/* 2-Column Clinical Layout (Shown when not in dedicated appointments/video tabs) */}
+        {activeTab !== 'appointments' && activeTab !== 'video' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Left Column: Assigned Patient Caseload (4 cols) */}
           <div className="lg:col-span-4 bg-white border border-slate-200 rounded-3xl p-5 shadow-sm h-fit">
@@ -1072,6 +1145,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* Prescription Builder Modal */}
@@ -1298,41 +1372,57 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
         </div>
       )}
 
-      {/* Incoming Patient Call Alert */}
+      {/* Full-Screen Priority Incoming Video Consultation Modal */}
       {incomingCall && !selectedMeeting && (
-        <div className="fixed top-6 right-6 z-50 max-w-md w-full bg-slate-900 border-2 border-blue-500 rounded-3xl p-5 shadow-2xl text-white animate-bounce-short">
-          <div className="flex items-center space-x-3 mb-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center animate-pulse">
-              <Video className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border-2 border-blue-500 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-white text-center animate-slideDown">
+            <div className="relative w-20 h-20 mx-auto mb-4">
+              <div className="absolute inset-0 rounded-full bg-blue-500/30 animate-ping"></div>
+              <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg border-2 border-blue-400">
+                <Video className="w-9 h-9" />
+              </div>
             </div>
-            <div>
-              <h4 className="text-sm font-bold text-white">Incoming Patient Telehealth Call</h4>
-              <p className="text-xs text-blue-300 font-mono">{incomingCall.callerName || 'Asha Sharma (Patient)'}</p>
+
+            <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-blue-950 border border-blue-800 text-[11px] font-mono text-blue-300 mb-2 font-bold uppercase">
+              <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+              <span>Incoming Patient Video Call</span>
             </div>
-          </div>
-          <p className="text-xs text-slate-300 mb-4">{incomingCall.meetingTitle || 'Clinical Telehealth Consultation'}</p>
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => {
-                setSelectedMeeting({
-                  title: incomingCall.meetingTitle || 'Clinical Telehealth Consultation',
-                  scheduled_time: 'Now (Immediate Telehealth)',
-                  room_id: incomingCall.roomId || `remotion-room-pt_1`
-                });
-                setIncomingCall(null);
-              }}
-              className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center space-x-1.5 shadow-lg shadow-blue-600/30 cursor-pointer"
-            >
-              <Video className="w-4 h-4" />
-              <span>Accept & Join Call</span>
-            </button>
-            <button
-              onClick={() => setIncomingCall(null)}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs flex items-center justify-center space-x-1.5 cursor-pointer"
-            >
-              <PhoneOff className="w-4 h-4 text-rose-400" />
-              <span>Decline</span>
-            </button>
+
+            <h3 className="text-xl font-bold text-white font-display">
+              {incomingCall.callerName || 'Asha Sharma (Patient)'}
+            </h3>
+            <p className="text-xs text-blue-300 font-mono mt-1">
+              {incomingCall.meetingTitle || 'Clinical Telehealth Review & Consultation'}
+            </p>
+            <p className="text-[11px] text-slate-300 mt-2 bg-slate-800/80 p-2.5 rounded-xl border border-slate-700 font-medium">
+              Your patient Asha Sharma has initiated an instant video consultation. Connect now to begin clinical motor review.
+            </p>
+
+            <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
+              <button
+                onClick={() => {
+                  setSelectedMeeting(incomingCall.meeting || {
+                    title: incomingCall.meetingTitle || 'Clinical Telehealth Consultation',
+                    scheduled_time: 'Now (Immediate Telehealth)',
+                    room_id: incomingCall.roomId || 'remotion-room-pt_1',
+                    patient_id: 'pt_1',
+                    patient_name: incomingCall.callerName || 'Asha Sharma'
+                  });
+                  setIncomingCall(null);
+                }}
+                className="w-full sm:flex-1 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/30 cursor-pointer transition-all"
+              >
+                <Video className="w-5 h-5" />
+                <span>Accept & Join Call</span>
+              </button>
+              <button
+                onClick={() => setIncomingCall(null)}
+                className="w-full sm:w-auto px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm flex items-center justify-center space-x-2 cursor-pointer transition-all"
+              >
+                <PhoneOff className="w-4 h-4 text-rose-400" />
+                <span>Decline</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

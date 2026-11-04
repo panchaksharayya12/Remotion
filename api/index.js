@@ -385,17 +385,18 @@ export default async function handler(req, res) {
         timestamp: Date.now()
       };
       WEBRTC_SIGNALS.push(signalEntry);
-      if (WEBRTC_SIGNALS.length > 300) WEBRTC_SIGNALS.shift();
+      if (WEBRTC_SIGNALS.length > 500) WEBRTC_SIGNALS.shift();
       return res.status(200).json({ success: true, signal: signalEntry });
     }
     // GET: Query signals for this room
     const targetRoomId = url.searchParams.get('roomId') || 'remotion-room-pt_1';
     const excludeSender = url.searchParams.get('excludeSender') || '';
     const since = parseInt(url.searchParams.get('since') || '0', 10);
+    const windowStart = since > 0 ? Math.min(since, Date.now() - 25000) : (Date.now() - 25000);
     const matched = WEBRTC_SIGNALS.filter(
-      s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp > since
+      s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp >= windowStart
     );
-    return res.status(200).json({ success: true, signals: matched });
+    return res.status(200).json({ success: true, signals: matched.slice(-30) });
   }
 
   // Real-Time Telehealth Call Alerts (rings on recipient portal immediately)
@@ -411,9 +412,11 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, alert: alertData });
     }
     const targetRole = url.searchParams.get('targetRole') || '';
-    const since = parseInt(url.searchParams.get('since') || '0', 10);
+    const excludeCallerRole = url.searchParams.get('excludeCallerRole') || '';
     const pendingAlerts = ACTIVE_CALL_ALERTS.filter(
-      a => (!targetRole || a.targetRole === targetRole) && a.timestamp > since
+      a => (Date.now() - a.timestamp < 45000) &&
+           (!targetRole || a.targetRole === targetRole) &&
+           (!excludeCallerRole || a.callerRole !== excludeCallerRole)
     );
     return res.status(200).json({ success: true, alerts: pendingAlerts });
   }
