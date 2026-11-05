@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Video, VideoOff, Mic, MicOff, PhoneOff, Globe, Subtitles,
-  Users, Clock, MessageSquare, Send, X, Layout, Maximize2,
-  Volume2, VolumeX, ShieldCheck, FlipHorizontal, Lock, Camera, Sparkles
+  Clock, MessageSquare, Send, X, Layout, Maximize2,
+  Volume2, VolumeX, FlipHorizontal, Lock
 } from 'lucide-react';
 import { api } from '../services/api';
 import { soundFX } from '../services/audio';
@@ -14,344 +14,6 @@ const ICE_SERVERS = {
     { urls: 'stun:global.stun.twilio.com:3478' }
   ]
 };
-
-// 1. High-Fidelity Clinician Face & Consultation Room Renderer
-function drawClinicianFace(ctx, w, h, t, isSpeaking) {
-  // Background: Clinical neuro-rehab office
-  const bgGrad = ctx.createLinearGradient(0, 0, w, h);
-  bgGrad.addColorStop(0, '#0a192f');
-  bgGrad.addColorStop(0.5, '#172a45');
-  bgGrad.addColorStop(1, '#0a192f');
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, w, h);
-
-  // Clinical department whiteboard
-  ctx.fillStyle = '#1e3a5f';
-  ctx.fillRect(35, 45, 185, 115);
-  ctx.fillStyle = '#224672';
-  ctx.fillRect(45, 55, 165, 95);
-  ctx.fillStyle = '#38bdf8';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('NEURO-REHAB CLINIC', 55, 75);
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '9px monospace';
-  ctx.fillText('STATION: WORKSPACE-1', 55, 94);
-  ctx.fillText('PATIENT: ASHA SHARMA', 55, 110);
-  ctx.fillStyle = '#10b981';
-  ctx.fillText('TELEHEALTH P2P: CONNECTED', 55, 126);
-
-  // Medical cross emblem
-  ctx.fillStyle = '#0284c7';
-  ctx.fillRect(w - 85, 45, 40, 40);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(w - 69, 51, 8, 28);
-  ctx.fillRect(w - 79, 61, 28, 8);
-
-  // Natural breathing and listening head motion
-  const swayX = Math.sin(t * 1.2) * 3;
-  const swayY = Math.cos(t * 0.9) * 2;
-  const cx = w / 2 + swayX;
-  const cy = h / 2 - 10 + swayY;
-
-  // Body & Shoulders
-  ctx.save();
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + 200, 165, 110, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#1e3a8a'; // Navy scrubs
-  ctx.fill();
-
-  // White medical doctor coat lapels
-  ctx.fillStyle = '#f8fafc';
-  ctx.beginPath();
-  ctx.moveTo(cx - 110, cy + 250);
-  ctx.lineTo(cx - 45, cy + 120);
-  ctx.lineTo(cx, cy + 190);
-  ctx.lineTo(cx - 65, cy + 250);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.moveTo(cx + 110, cy + 250);
-  ctx.lineTo(cx + 45, cy + 120);
-  ctx.lineTo(cx, cy + 190);
-  ctx.lineTo(cx + 65, cy + 250);
-  ctx.fill();
-
-  // Stethoscope
-  ctx.strokeStyle = '#94a3b8';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(cx, cy + 130, 44, 0.2, Math.PI - 0.2);
-  ctx.stroke();
-  ctx.fillStyle = '#0284c7';
-  ctx.beginPath();
-  ctx.arc(cx, cy + 174, 9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  // Neck
-  ctx.fillStyle = '#e29578';
-  ctx.fillRect(cx - 28, cy + 60, 56, 60);
-
-  // Head
-  ctx.save();
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, 72, 90, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#e29578';
-  ctx.fill();
-  ctx.restore();
-
-  // Hair
-  ctx.save();
-  ctx.fillStyle = '#0f172a';
-  ctx.beginPath();
-  ctx.arc(cx, cy - 25, 78, Math.PI, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  // Eyebrows
-  ctx.strokeStyle = '#1e293b';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.arc(cx - 26, cy - 18, 14, Math.PI * 1.1, Math.PI * 1.9);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx + 26, cy - 18, 14, Math.PI * 1.1, Math.PI * 1.9);
-  ctx.stroke();
-
-  // Eyes and Blinking (blinks every 3.5s)
-  const isBlinking = (t % 3.5) < 0.15;
-  if (isBlinking) {
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(cx - 26, cy - 6, 10, 0, Math.PI);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx + 26, cy - 6, 10, 0, Math.PI);
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.arc(cx - 26, cy - 6, 6.5, 0, Math.PI * 2);
-    ctx.arc(cx + 26, cy - 6, 6.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(cx - 24, cy - 8, 2, 0, Math.PI * 2);
-    ctx.arc(cx + 28, cy - 8, 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Glasses
-  ctx.strokeStyle = '#38bdf8';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(cx - 45, cy - 18, 36, 24);
-  ctx.strokeRect(cx + 9, cy - 18, 36, 24);
-  ctx.beginPath();
-  ctx.moveTo(cx - 9, cy - 6);
-  ctx.lineTo(cx + 9, cy - 6);
-  ctx.stroke();
-
-  // Nose
-  ctx.strokeStyle = '#c57d60';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(cx, cy - 4);
-  ctx.lineTo(cx + 4, cy + 18);
-  ctx.lineTo(cx - 3, cy + 20);
-  ctx.stroke();
-
-  // Mouth (animated speaking)
-  const mouthOpen = isSpeaking ? (Math.abs(Math.sin(t * 8)) * 6 + 2) : (Math.abs(Math.sin(t * 1.5)) * 1.5 + 1);
-  ctx.fillStyle = '#881337';
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + 42, 15, 2 + mouthOpen, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Clinical HUD Badge
-  ctx.fillStyle = 'rgba(11, 20, 26, 0.88)';
-  ctx.fillRect(16, h - 56, 320, 44);
-  ctx.strokeStyle = '#0284c7';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(16, h - 56, 320, 44);
-
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.fillText('Dr. Rajesh Kulkarni, PT', 28, h - 38);
-  ctx.fillStyle = '#38bdf8';
-  ctx.font = '9px monospace';
-  ctx.fillText('LEAD NEURO-REHABILITATION CLINICIAN', 28, h - 22);
-
-  // Live indicator
-  ctx.fillStyle = '#10b981';
-  ctx.beginPath();
-  ctx.arc(w - 65, 28, 5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 10px monospace';
-  ctx.fillText('HD LIVE', w - 54, 32);
-}
-
-// 2. High-Fidelity Patient Face & Recovery Room Renderer
-function drawPatientFace(ctx, w, h, t, isSpeaking) {
-  // Background: Warm daylight recovery room
-  const bgGrad = ctx.createLinearGradient(0, 0, w, h);
-  bgGrad.addColorStop(0, '#064e3b');
-  bgGrad.addColorStop(0.5, '#0d5c48');
-  bgGrad.addColorStop(1, '#064e3b');
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, w, h);
-
-  // Ambient daylight window
-  const winGrad = ctx.createRadialGradient(w - 120, 100, 20, w - 120, 100, 160);
-  winGrad.addColorStop(0, 'rgba(45, 212, 191, 0.35)');
-  winGrad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = winGrad;
-  ctx.fillRect(w - 280, 0, 280, 240);
-
-  // Natural listening sway
-  const swayX = Math.sin(t * 1.3) * 3;
-  const swayY = Math.cos(t * 0.9) * 2;
-  const cx = w / 2 + swayX;
-  const cy = h / 2 - 10 + swayY;
-
-  // Body / Shoulders in comfortable rehabilitation attire
-  ctx.save();
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + 200, 160, 105, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#0f766e';
-  ctx.fill();
-  ctx.fillStyle = '#14b8a6';
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + 155, 54, 28, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-
-  // Neck
-  ctx.fillStyle = '#e8a588';
-  ctx.fillRect(cx - 26, cy + 60, 52, 60);
-
-  // Head
-  ctx.save();
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, 70, 88, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#e8a588';
-  ctx.fill();
-  ctx.restore();
-
-  // Long flowing hair
-  ctx.save();
-  ctx.fillStyle = '#271c19';
-  ctx.beginPath();
-  ctx.arc(cx, cy - 25, 78, Math.PI, Math.PI * 2);
-  ctx.fill();
-  ctx.fillRect(cx - 82, cy - 25, 28, 120);
-  ctx.fillRect(cx + 54, cy - 25, 28, 120);
-  ctx.restore();
-
-  // Eyebrows
-  ctx.strokeStyle = '#1e293b';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.arc(cx - 26, cy - 18, 14, Math.PI * 1.1, Math.PI * 1.9);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(cx + 26, cy - 18, 14, Math.PI * 1.1, Math.PI * 1.9);
-  ctx.stroke();
-
-  // Eyes and Blinking
-  const isBlinking = (t % 3.6) < 0.15;
-  if (isBlinking) {
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(cx - 26, cy - 6, 10, 0, Math.PI);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx + 26, cy - 6, 10, 0, Math.PI);
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.arc(cx - 26, cy - 6, 6.5, 0, Math.PI * 2);
-    ctx.arc(cx + 26, cy - 6, 6.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(cx - 24, cy - 8, 2, 0, Math.PI * 2);
-    ctx.arc(cx + 28, cy - 8, 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Nose
-  ctx.strokeStyle = '#c57d60';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(cx, cy - 4);
-  ctx.lineTo(cx + 4, cy + 18);
-  ctx.lineTo(cx - 3, cy + 20);
-  ctx.stroke();
-
-  // Mouth with friendly smile
-  const mouthOpen = isSpeaking ? (Math.abs(Math.sin(t * 8)) * 6 + 2) : (Math.abs(Math.sin(t * 1.5)) * 1.5 + 1);
-  ctx.fillStyle = '#be123c';
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + 42, 15, 2.5 + mouthOpen, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Patient HUD Badge
-  ctx.fillStyle = 'rgba(11, 20, 26, 0.88)';
-  ctx.fillRect(16, h - 56, 320, 44);
-  ctx.strokeStyle = '#0d9488';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(16, h - 56, 320, 44);
-
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.fillText('Asha Sharma (Patient)', 28, h - 38);
-  ctx.fillStyle = '#2dd4bf';
-  ctx.font = '9px monospace';
-  ctx.fillText('MOTOR RECOVERY TELEMETRY • DAY 42', 28, h - 22);
-
-  // Live indicator
-  ctx.fillStyle = '#10b981';
-  ctx.beginPath();
-  ctx.arc(w - 65, 28, 5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 10px monospace';
-  ctx.fillText('HD LIVE', w - 54, 32);
-}
-
-// 3. WhatsApp Camera Paused Card
-function drawPausedFace(ctx, w, h, initials, name) {
-  ctx.fillStyle = '#0b141a';
-  ctx.fillRect(0, 0, w, h);
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(w / 2, h / 2 - 20, 45, 0, Math.PI * 2);
-  ctx.fillStyle = '#1e293b';
-  ctx.fill();
-  ctx.strokeStyle = '#334155';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = 'bold 22px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(initials, w / 2, h / 2 - 20);
-
-  ctx.font = '12px sans-serif';
-  ctx.fillStyle = '#cbd5e1';
-  ctx.fillText(name, w / 2, h / 2 + 40);
-
-  ctx.font = '10px monospace';
-  ctx.fillStyle = '#64748b';
-  ctx.fillText('CAMERA PAUSED', w / 2, h / 2 + 58);
-  ctx.restore();
-}
 
 export default function VideoMeetingModal({
   isOpen = true,
@@ -368,16 +30,16 @@ export default function VideoMeetingModal({
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
-  const [cameraMode, setCameraMode] = useState('persona'); // 'persona' (HD animated face) or 'webcam' (hardware camera)
+  const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState('en');
-  const [connectionStatus, setConnectionStatus] = useState('Live Consultation Active');
-  const [hasRemotePeer, setHasRemotePeer] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('Connecting to WhatsApp Video...');
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
   const [remotePeerInfo, setRemotePeerInfo] = useState(null);
   const [showInCallChat, setShowInCallChat] = useState(false);
   const [inCallInput, setInCallInput] = useState('');
-  const [layoutMode, setLayoutMode] = useState('whatsapp'); // 'whatsapp' (PiP full view) or 'split' (side-by-side)
+  const [layoutMode, setLayoutMode] = useState('whatsapp'); // 'whatsapp' (Full + PiP) or 'split' (side-by-side)
   const [isSwapped, setIsSwapped] = useState(false); // In WhatsApp mode, swap main and PiP feeds
   const [unreadChatCount, setUnreadChatCount] = useState(0);
 
@@ -385,7 +47,7 @@ export default function VideoMeetingModal({
     {
       id: 'm_system_1',
       sender: 'System Telehealth Hub',
-      text: 'End-to-end encrypted consultation room active.',
+      text: 'End-to-end encrypted video consultation room active.',
       time: 'Just now',
       isSystem: true
     }
@@ -394,30 +56,28 @@ export default function VideoMeetingModal({
     {
       speaker: isTherapist ? 'Dr. Rajesh Kulkarni' : (meeting?.patient_name || 'Patient'),
       text: isTherapist
-        ? `Hello ${meeting?.patient_name || 'there'}. Ready for our clinical motor review and assessment.`
+        ? `Hello ${meeting?.patient_name || 'Asha'}. Ready for our clinical motor review and assessment.`
         : 'Hello Doctor. Ready for our clinical video consultation.',
       time: 'Just now'
     }
   ]);
   const [liveTranscript, setLiveTranscript] = useState('');
 
-  // DOM Refs
-  const localCanvasRef = useRef(null);
-  const remoteCanvasRef = useRef(null);
+  // Hardware Video & Audio DOM Element Refs
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const remoteAudioRef = useRef(null);
   const inCallEndRef = useRef(null);
 
-  // Connection Refs
+  // WebRTC & Session Refs
+  const localStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const recognitionRef = useRef(null);
   const candidateQueueRef = useRef([]);
   const processedSignalIdsRef = useRef(new Set());
   const senderIdRef = useRef('peer_' + Math.random().toString(36).substring(2, 9));
   const bcRef = useRef(null);
-  const animIntervalRef = useRef(null);
-  const startTimeRef = useRef(Date.now());
+  const sessionStartTimeRef = useRef(Date.now());
 
   const otherPeerName = remotePeerInfo?.name || (isTherapist ? 'Asha Sharma' : 'Dr. Rajesh Kulkarni, PT');
   const otherPeerRoleLabel = isTherapist ? 'Patient Telemetry Feed' : 'Lead Physical Therapist';
@@ -434,68 +94,6 @@ export default function VideoMeetingModal({
     .slice(0, 2)
     .map(n => n[0])
     .join('') || (isTherapist ? 'RK' : 'AS');
-
-  // Continuous 30fps Canvas Rendering Engine (Guarantees visible faces on screen from Frame 1)
-  useEffect(() => {
-    startTimeRef.current = Date.now();
-
-    const renderLoop = () => {
-      const elapsed = (Date.now() - startTimeRef.current) / 1000;
-      const isLocalSpeaking = !!liveTranscript || (!isAudioMuted && Math.sin(elapsed * 2) > 0.4);
-      const isRemoteSpeaking = !isSpeakerMuted && Math.sin(elapsed * 1.8) > 0.3;
-
-      // 1. Render Local Canvas
-      if (localCanvasRef.current) {
-        const ctx = localCanvasRef.current.getContext('2d');
-        const w = localCanvasRef.current.width;
-        const h = localCanvasRef.current.height;
-
-        if (isVideoMuted) {
-          drawPausedFace(ctx, w, h, myInitials, myName);
-        } else if (cameraMode === 'webcam' && localVideoRef.current && localVideoRef.current.readyState >= 2) {
-          ctx.save();
-          ctx.translate(w, 0);
-          ctx.scale(-1, 1);
-          ctx.drawImage(localVideoRef.current, 0, 0, w, h);
-          ctx.restore();
-        } else {
-          if (isTherapist) {
-            drawClinicianFace(ctx, w, h, elapsed, isLocalSpeaking);
-          } else {
-            drawPatientFace(ctx, w, h, elapsed, isLocalSpeaking);
-          }
-        }
-      }
-
-      // 2. Render Remote Canvas
-      if (remoteCanvasRef.current) {
-        const ctx = remoteCanvasRef.current.getContext('2d');
-        const w = remoteCanvasRef.current.width;
-        const h = remoteCanvasRef.current.height;
-
-        if (remoteVideoRef.current && remoteVideoRef.current.readyState >= 2 && !remoteVideoRef.current.paused) {
-          ctx.drawImage(remoteVideoRef.current, 0, 0, w, h);
-        } else {
-          // Render remote persona: Asha Sharma on doctor's screen, Dr. Rajesh on patient's screen
-          if (isTherapist) {
-            drawPatientFace(ctx, w, h, elapsed, isRemoteSpeaking);
-          } else {
-            drawClinicianFace(ctx, w, h, elapsed, isRemoteSpeaking);
-          }
-        }
-      }
-    };
-
-    // Render immediately on mount
-    renderLoop();
-
-    // Run continuous 30fps loop via setInterval so background/split tabs never pause
-    animIntervalRef.current = setInterval(renderLoop, 1000 / 30);
-
-    return () => {
-      if (animIntervalRef.current) clearInterval(animIntervalRef.current);
-    };
-  }, [isVideoMuted, cameraMode, isTherapist, myName, myInitials, isAudioMuted, isSpeakerMuted, liveTranscript]);
 
   // Multi-tier signaling dispatcher (BroadcastChannel + localStorage + Serverless HTTP + ntfy.sh)
   const postSignal = (type, payload = {}) => {
@@ -566,8 +164,7 @@ export default function VideoMeetingModal({
       await pc.setLocalDescription(answer);
 
       postSignal('answer', { answer });
-      setHasRemotePeer(true);
-      setConnectionStatus(`Connected to ${fromUser || 'Peer'} • Live Consultation Active`);
+      setConnectionStatus(`Connected to ${fromUser || 'Peer'} • Live Video Active`);
     } catch (err) {
       console.error('[WebRTC] Offer error:', err);
     }
@@ -592,8 +189,7 @@ export default function VideoMeetingModal({
       if (pc.signalingState === 'have-local-offer') {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         await drainIceCandidates();
-        setHasRemotePeer(true);
-        setConnectionStatus('P2P Direct Video Connected');
+        setConnectionStatus('Live Video Connected');
       }
     } catch (err) {}
   };
@@ -614,6 +210,9 @@ export default function VideoMeetingModal({
     if (!data || data.senderId === senderIdRef.current) return;
     if (data.roomId && data.roomId !== roomId) return;
 
+    // Ignore stale signals from prior sessions
+    if (data.timestamp && data.timestamp < sessionStartTimeRef.current - 3000) return;
+
     const sigKey = data.id || `${data.type}_${data.senderId}_${data.timestamp}`;
     if (processedSignalIdsRef.current.has(sigKey)) return;
     processedSignalIdsRef.current.add(sigKey);
@@ -622,7 +221,6 @@ export default function VideoMeetingModal({
 
     if (data.type === 'ping' || data.type === 'join') {
       setRemotePeerInfo({ name: data.userName, role: data.role });
-      setHasRemotePeer(true);
       setConnectionStatus(`${data.userName || 'Peer'} connected • Live Consultation Active`);
 
       const shouldInitiate = isTherapist || senderIdRef.current < data.senderId;
@@ -634,11 +232,9 @@ export default function VideoMeetingModal({
         } catch (e) {}
       }
     } else if (data.type === 'offer') {
-      setHasRemotePeer(true);
       setRemotePeerInfo({ name: data.userName, role: data.role });
       await handleOffer(data.offer, data.userName);
     } else if (data.type === 'answer') {
-      setHasRemotePeer(true);
       await handleAnswer(data.answer);
     } else if (data.type === 'candidate') {
       await handleCandidate(data.candidate);
@@ -655,8 +251,11 @@ export default function VideoMeetingModal({
         speakIncomingText(data.message.text, data.message.sender);
       }
     } else if (data.type === 'leave') {
-      setHasRemotePeer(false);
-      setConnectionStatus('Peer left the consultation room.');
+      // Only handle leave if it was generated after current session started
+      if (data.timestamp && data.timestamp > sessionStartTimeRef.current) {
+        setHasRemoteVideo(false);
+        setConnectionStatus('Peer disconnected');
+      }
     }
   };
 
@@ -713,51 +312,85 @@ export default function VideoMeetingModal({
 
   const setupMeeting = async () => {
     try {
+      sessionStartTimeRef.current = Date.now();
       candidateQueueRef.current = [];
 
-      // Acquire hardware camera if available
+      // 1. Acquire Real Hardware Camera & Microphone
+      let stream = null;
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const hwStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
             audio: true
           });
-          if (localVideoRef.current && hwStream) {
-            localVideoRef.current.srcObject = hwStream;
-            localVideoRef.current.play().catch(() => {});
+        }
+      } catch (e1) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        } catch (e2) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          } catch (e3) {
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (e4) {}
           }
         }
-      } catch (e) {}
+      }
 
-      // Setup RTCPeerConnection
+      localStreamRef.current = stream;
+
+      // Attach local stream directly to local video DOM element
+      if (localVideoRef.current && stream) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
+      }
+
+      // 2. Setup Genuine WebRTC Peer Connection
       const pc = new RTCPeerConnection(ICE_SERVERS);
       peerConnectionRef.current = pc;
 
-      // Capture local canvas as WebRTC track so peers see the animated face/webcam stream
-      if (localCanvasRef.current && localCanvasRef.current.captureStream) {
-        try {
-          const cStream = localCanvasRef.current.captureStream(30);
-          cStream.getTracks().forEach(track => pc.addTrack(track, cStream));
-        } catch (e) {}
+      // Add real hardware tracks to WebRTC pipe
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          pc.addTrack(track, stream);
+        });
       }
 
       pc.ontrack = (event) => {
-        const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+        console.log('[WebRTC] Remote track received:', event.track.kind);
+        const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+        
         if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = stream;
+          remoteVideoRef.current.srcObject = remoteStream;
           remoteVideoRef.current.play().catch(() => {});
         }
         if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = stream;
-          remoteAudioRef.current.play().catch(() => {});
+          remoteAudioRef.current.srcObject = remoteStream;
+          remoteAudioRef.current.play().then(() => {
+            setIsAudioPlaybackBlocked(false);
+          }).catch(() => {
+            setIsAudioPlaybackBlocked(true);
+          });
         }
-        setHasRemotePeer(true);
+        setHasRemoteVideo(true);
+        setConnectionStatus('Live Consultation Active');
       };
 
       pc.onicecandidate = (event) => {
         if (event.candidate) postSignal('candidate', { candidate: event.candidate });
       };
 
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          setHasRemoteVideo(true);
+          setConnectionStatus('Live Video Active');
+        } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          setConnectionStatus('Reconnecting peer link...');
+        }
+      };
+
+      // 3. Initialize BroadcastChannel for 0ms cross-tab real-time communication
       try {
         const bc = new BroadcastChannel(`remotion_webrtc_channel_${roomId}`);
         bcRef.current = bc;
@@ -771,7 +404,7 @@ export default function VideoMeetingModal({
     }
   };
 
-  // Heartbeat ping
+  // Heartbeat ping (dispatches every 1000ms while active)
   useEffect(() => {
     let pingInterval;
     if (isOpen) {
@@ -807,7 +440,7 @@ export default function VideoMeetingModal({
     };
   }, [roomId]);
 
-  // Cloud SSE / Polling
+  // Cloud SSE / Polling for cross-browser synchronization
   useEffect(() => {
     let sseSource = null;
     let ntfyPoll = null;
@@ -867,7 +500,7 @@ export default function VideoMeetingModal({
     };
   }, [isOpen, roomId]);
 
-  // Subtitles reload
+  // Subtitles language reload
   useEffect(() => {
     if (isOpen && captionsEnabled) {
       startSpeechSubtitles();
@@ -886,7 +519,9 @@ export default function VideoMeetingModal({
 
   const teardownMeeting = () => {
     postSignal('leave');
-    if (animIntervalRef.current) clearInterval(animIntervalRef.current);
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+    }
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
@@ -897,6 +532,22 @@ export default function VideoMeetingModal({
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
     }
+  };
+
+  const toggleAudio = () => {
+    if (localStreamRef.current) {
+      const aTrack = localStreamRef.current.getAudioTracks()[0];
+      if (aTrack) aTrack.enabled = isAudioMuted;
+    }
+    setIsAudioMuted(!isAudioMuted);
+  };
+
+  const toggleVideo = () => {
+    if (localStreamRef.current) {
+      const vTrack = localStreamRef.current.getVideoTracks()[0];
+      if (vTrack) vTrack.enabled = isVideoMuted;
+    }
+    setIsVideoMuted(!isVideoMuted);
   };
 
   const handleSendInCallMessage = (e) => {
@@ -925,7 +576,7 @@ export default function VideoMeetingModal({
     return `${m}:${s}`;
   };
 
-  // WhatsApp Layout Styles
+  // WhatsApp Layout Container Classes
   const remoteContainerClass = layoutMode === 'split'
     ? 'relative rounded-3xl bg-[#0b141a] border border-white/10 overflow-hidden flex items-center justify-center h-full min-h-[300px] shadow-xl'
     : !isSwapped
@@ -970,20 +621,6 @@ export default function VideoMeetingModal({
 
           {/* Quick Header Controls */}
           <div className="flex items-center space-x-2">
-            {/* Camera Source Switcher: Animated Persona vs Physical Webcam */}
-            <button
-              onClick={() => setCameraMode(cameraMode === 'persona' ? 'webcam' : 'persona')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium cursor-pointer transition-all ${
-                cameraMode === 'webcam'
-                  ? 'bg-cyan-950 text-cyan-300 border-cyan-500/60 font-bold'
-                  : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border-white/10'
-              }`}
-              title="Toggle between HD Clinical Persona and Real Hardware Webcam"
-            >
-              <Camera className="w-3.5 h-3.5 text-cyan-400" />
-              <span className="hidden sm:inline">{cameraMode === 'webcam' ? 'Real Camera' : 'HD Persona'}</span>
-            </button>
-
             {/* Layout Toggle: WhatsApp PiP vs Split View */}
             <button
               onClick={() => setLayoutMode(layoutMode === 'whatsapp' ? 'split' : 'whatsapp')}
@@ -1034,30 +671,63 @@ export default function VideoMeetingModal({
         {/* Hidden Audio Element for WebRTC audio playback */}
         <audio ref={remoteAudioRef} autoPlay playsInline />
 
-        {/* Hidden Video Elements (capture streams in background without black display) */}
-        <video ref={localVideoRef} autoPlay playsInline muted style={{ display: 'none' }} />
-        <video ref={remoteVideoRef} autoPlay playsInline muted style={{ display: 'none' }} />
+        {/* Audio Unmute Alert Banner */}
+        {isAudioPlaybackBlocked && (
+          <div
+            onClick={() => {
+              if (remoteAudioRef.current) {
+                remoteAudioRef.current.play().then(() => setIsAudioPlaybackBlocked(false)).catch(() => {});
+              }
+            }}
+            className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-slate-950 text-xs font-bold flex items-center justify-center space-x-2 cursor-pointer shadow-lg animate-pulse"
+          >
+            <Volume2 className="w-4 h-4" />
+            <span>Consultation voice output paused by browser. Tap anywhere to enable sound!</span>
+          </div>
+        )}
 
-        {/* Main Stage: Continuous Dual Canvas Engines (Always Display Faces) */}
+        {/* Main Stage: Hardware-Accelerated 60fps Real Video (WhatsApp Style) */}
         <div className="flex-1 p-3 sm:p-4 bg-[#080f14] relative overflow-hidden flex flex-col justify-center">
           <div className={layoutMode === 'split' ? 'w-full h-full grid grid-cols-1 md:grid-cols-2 gap-4' : 'relative w-full h-full overflow-hidden rounded-3xl'}>
             
-            {/* Remote Peer Stage */}
+            {/* Remote Peer Video Stage */}
             <div
               className={remoteContainerClass}
               onClick={layoutMode === 'whatsapp' && isSwapped ? () => setIsSwapped(false) : undefined}
-              title={layoutMode === 'whatsapp' && isSwapped ? 'Click to bring remote face to main screen' : undefined}
+              title={layoutMode === 'whatsapp' && isSwapped ? 'Click to bring remote camera to main screen' : undefined}
             >
-              <canvas
-                ref={remoteCanvasRef}
-                width={640}
-                height={480}
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
                 className="w-full h-full object-cover"
               />
 
+              {/* WhatsApp Waiting Screen when remote camera is connecting or waiting */}
+              {!hasRemoteVideo && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0b141a] text-center p-6 z-20">
+                  <div className="relative w-24 h-24 mb-4 flex items-center justify-center">
+                    <div className="absolute inset-0 rounded-full bg-emerald-500/20 animate-ping"></div>
+                    <div className="w-24 h-24 rounded-full bg-[#111b21] border-2 border-emerald-500/50 flex items-center justify-center text-emerald-400 font-bold text-3xl font-mono shadow-2xl">
+                      {otherPeerInitials}
+                    </div>
+                  </div>
+                  <h4 className="text-lg font-bold text-white font-display">
+                    {otherPeerName}
+                  </h4>
+                  <p className="text-xs text-emerald-400 mt-1.5 font-mono flex items-center space-x-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
+                    <span>Connecting WhatsApp Video Consultation...</span>
+                  </p>
+                  <div className="mt-3 px-3 py-1 rounded-full bg-slate-900 border border-white/10 text-[10px] font-mono text-slate-300">
+                    Room: {roomId}
+                  </div>
+                </div>
+              )}
+
               {/* Remote Name Pill */}
-              <div className={`bg-black/80 px-3 py-1.5 rounded-full text-white backdrop-blur-md border border-white/15 ${
-                layoutMode === 'whatsapp' && !isSwapped ? 'absolute top-4 left-4 z-20 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate z-20'
+              <div className={`bg-black/75 px-3 py-1.5 rounded-full text-white backdrop-blur-md border border-white/10 z-20 ${
+                layoutMode === 'whatsapp' && !isSwapped ? 'absolute top-4 left-4 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
               }`}>
                 <span className="font-bold">{otherPeerName}</span>
                 {(!isSwapped || layoutMode === 'split') && (
@@ -1066,26 +736,37 @@ export default function VideoMeetingModal({
               </div>
             </div>
 
-            {/* Local Peer Stage */}
+            {/* Local Peer Video Stage */}
             <div
               className={localContainerClass}
               onClick={layoutMode === 'whatsapp' && !isSwapped ? () => setIsSwapped(true) : undefined}
-              title={layoutMode === 'whatsapp' && !isSwapped ? 'Click to enlarge your own feed' : undefined}
+              title={layoutMode === 'whatsapp' && !isSwapped ? 'Click to enlarge your camera' : undefined}
             >
-              <canvas
-                ref={localCanvasRef}
-                width={640}
-                height={480}
-                className="w-full h-full object-cover"
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover -scale-x-100"
               />
 
+              {/* Local Camera Muted State */}
+              {isVideoMuted && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#111b21] text-center p-3 z-20">
+                  <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center text-slate-300 font-bold text-lg mb-2">
+                    {myInitials}
+                  </div>
+                  <span className="text-[10px] text-slate-300 font-mono">Camera Off</span>
+                </div>
+              )}
+
               {/* Local Name Pill */}
-              <div className={`bg-black/80 px-3 py-1.5 rounded-full text-white backdrop-blur-md border border-white/15 ${
-                layoutMode === 'whatsapp' && isSwapped ? 'absolute top-4 left-4 z-20 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate z-20'
+              <div className={`bg-black/75 px-3 py-1.5 rounded-full text-white backdrop-blur-md border border-white/10 z-20 ${
+                layoutMode === 'whatsapp' && isSwapped ? 'absolute top-4 left-4 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
               }`}>
                 <span className="font-bold">You ({myName})</span>
                 {(isSwapped || layoutMode === 'split') && (
-                  <span className="text-[10px] text-emerald-400 font-mono ml-2">(Local Feed)</span>
+                  <span className="text-[10px] text-emerald-400 font-mono ml-2">(Local Camera)</span>
                 )}
               </div>
             </div>
@@ -1200,7 +881,7 @@ export default function VideoMeetingModal({
           <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center space-x-3 bg-[#111b21]/95 backdrop-blur-2xl border border-white/15 px-6 py-3 rounded-full shadow-2xl">
             {/* Microphone Toggle */}
             <button
-              onClick={() => setIsAudioMuted(!isAudioMuted)}
+              onClick={toggleAudio}
               className={`w-11 h-11 rounded-full flex items-center justify-center transition-all cursor-pointer ${
                 isAudioMuted
                   ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/40'
@@ -1213,7 +894,7 @@ export default function VideoMeetingModal({
 
             {/* Video Camera Toggle */}
             <button
-              onClick={() => setIsVideoMuted(!isVideoMuted)}
+              onClick={toggleVideo}
               className={`w-11 h-11 rounded-full flex items-center justify-center transition-all cursor-pointer ${
                 isVideoMuted
                   ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/40'
