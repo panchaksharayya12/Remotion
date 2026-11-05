@@ -34,14 +34,16 @@ export default function VideoMeetingModal({
   const [callDuration, setCallDuration] = useState(0);
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState('en');
-  const [connectionStatus, setConnectionStatus] = useState('Connecting to WhatsApp Video...');
+  const [connectionStatus, setConnectionStatus] = useState('Video Consultation');
   const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
   const [remotePeerInfo, setRemotePeerInfo] = useState(null);
   const [showInCallChat, setShowInCallChat] = useState(false);
   const [inCallInput, setInCallInput] = useState('');
-  const [layoutMode, setLayoutMode] = useState('whatsapp'); // 'whatsapp' (Full + PiP) or 'split' (side-by-side)
+  const [layoutMode, setLayoutMode] = useState('whatsapp'); // 'whatsapp' (PiP full view) or 'split' (side-by-side)
   const [isSwapped, setIsSwapped] = useState(false); // In WhatsApp mode, swap main and PiP feeds
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
 
   const [inCallMessages, setInCallMessages] = useState([
     {
@@ -94,6 +96,25 @@ export default function VideoMeetingModal({
     .slice(0, 2)
     .map(n => n[0])
     .join('') || (isTherapist ? 'RK' : 'AS');
+
+  // Direct video stream synchronization to DOM elements
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      if (localVideoRef.current.srcObject !== localStream) {
+        localVideoRef.current.srcObject = localStream;
+      }
+      localVideoRef.current.play().catch(() => {});
+    }
+  }, [localStream, layoutMode, isSwapped]);
+
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      if (remoteVideoRef.current.srcObject !== remoteStream) {
+        remoteVideoRef.current.srcObject = remoteStream;
+      }
+      remoteVideoRef.current.play().catch(() => {});
+    }
+  }, [remoteStream, layoutMode, isSwapped]);
 
   // Multi-tier signaling dispatcher (BroadcastChannel + localStorage + Serverless HTTP + ntfy.sh)
   const postSignal = (type, payload = {}) => {
@@ -164,7 +185,8 @@ export default function VideoMeetingModal({
       await pc.setLocalDescription(answer);
 
       postSignal('answer', { answer });
-      setConnectionStatus(`Connected to ${fromUser || 'Peer'} • Live Video Active`);
+      setHasRemoteVideo(true);
+      setConnectionStatus('Live Video Consultation Active');
     } catch (err) {
       console.error('[WebRTC] Offer error:', err);
     }
@@ -189,7 +211,8 @@ export default function VideoMeetingModal({
       if (pc.signalingState === 'have-local-offer') {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         await drainIceCandidates();
-        setConnectionStatus('Live Video Connected');
+        setHasRemoteVideo(true);
+        setConnectionStatus('Live Video Consultation Active');
       }
     } catch (err) {}
   };
@@ -221,7 +244,8 @@ export default function VideoMeetingModal({
 
     if (data.type === 'ping' || data.type === 'join') {
       setRemotePeerInfo({ name: data.userName, role: data.role });
-      setConnectionStatus(`${data.userName || 'Peer'} connected • Live Consultation Active`);
+      setHasRemoteVideo(true);
+      setConnectionStatus('Live Video Consultation Active');
 
       const shouldInitiate = isTherapist || senderIdRef.current < data.senderId;
       if (pc && shouldInitiate && pc.signalingState === 'stable') {
@@ -233,8 +257,12 @@ export default function VideoMeetingModal({
       }
     } else if (data.type === 'offer') {
       setRemotePeerInfo({ name: data.userName, role: data.role });
+      setHasRemoteVideo(true);
+      setConnectionStatus('Live Video Consultation Active');
       await handleOffer(data.offer, data.userName);
     } else if (data.type === 'answer') {
+      setHasRemoteVideo(true);
+      setConnectionStatus('Live Video Consultation Active');
       await handleAnswer(data.answer);
     } else if (data.type === 'candidate') {
       await handleCandidate(data.candidate);
@@ -251,7 +279,6 @@ export default function VideoMeetingModal({
         speakIncomingText(data.message.text, data.message.sender);
       }
     } else if (data.type === 'leave') {
-      // Only handle leave if it was generated after current session started
       if (data.timestamp && data.timestamp > sessionStartTimeRef.current) {
         setHasRemoteVideo(false);
         setConnectionStatus('Peer disconnected');
@@ -338,7 +365,24 @@ export default function VideoMeetingModal({
         }
       }
 
+      // If video track was restricted (e.g. webcam held by other tab), supply lightweight video track so WebRTC establishes
+      if (!stream || stream.getVideoTracks().length === 0) {
+        try {
+          const cv = document.createElement('canvas');
+          cv.width = 640;
+          cv.height = 480;
+          const ctx = cv.getContext('2d');
+          ctx.fillStyle = '#0b141a';
+          ctx.fillRect(0, 0, 640, 480);
+          const cStream = cv.captureStream(10);
+          const vTrack = cStream.getVideoTracks()[0];
+          if (!stream) stream = new MediaStream([vTrack]);
+          else stream.addTrack(vTrack);
+        } catch (e) {}
+      }
+
       localStreamRef.current = stream;
+      setLocalStream(stream);
 
       // Attach local stream directly to local video DOM element
       if (localVideoRef.current && stream) {
@@ -359,14 +403,15 @@ export default function VideoMeetingModal({
 
       pc.ontrack = (event) => {
         console.log('[WebRTC] Remote track received:', event.track.kind);
-        const remoteStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+        const rStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
         
+        setRemoteStream(rStream);
         if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
+          remoteVideoRef.current.srcObject = rStream;
           remoteVideoRef.current.play().catch(() => {});
         }
         if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = remoteStream;
+          remoteAudioRef.current.srcObject = rStream;
           remoteAudioRef.current.play().then(() => {
             setIsAudioPlaybackBlocked(false);
           }).catch(() => {
@@ -374,7 +419,7 @@ export default function VideoMeetingModal({
           });
         }
         setHasRemoteVideo(true);
-        setConnectionStatus('Live Consultation Active');
+        setConnectionStatus('Live Video Consultation Active');
       };
 
       pc.onicecandidate = (event) => {
@@ -384,7 +429,7 @@ export default function VideoMeetingModal({
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') {
           setHasRemoteVideo(true);
-          setConnectionStatus('Live Video Active');
+          setConnectionStatus('Live Video Consultation Active');
         } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
           setConnectionStatus('Reconnecting peer link...');
         }
@@ -576,7 +621,7 @@ export default function VideoMeetingModal({
     return `${m}:${s}`;
   };
 
-  // WhatsApp Layout Container Classes
+  // Layout Container Classes
   const remoteContainerClass = layoutMode === 'split'
     ? 'relative rounded-3xl bg-[#0b141a] border border-white/10 overflow-hidden flex items-center justify-center h-full min-h-[300px] shadow-xl'
     : !isSwapped
@@ -593,7 +638,7 @@ export default function VideoMeetingModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/95 backdrop-blur-2xl animate-fadeIn">
       <div className="bg-[#0b141a] border border-emerald-500/30 rounded-3xl max-w-6xl w-full h-[94vh] flex flex-col shadow-2xl overflow-hidden relative">
         
-        {/* WhatsApp Top Header Bar */}
+        {/* Top Header Bar */}
         <div className="p-3 sm:p-4 bg-[#111b21] border-b border-white/10 flex items-center justify-between shrink-0 z-30 shadow-md">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-full bg-emerald-950 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold font-mono text-sm shadow-md">
@@ -621,14 +666,14 @@ export default function VideoMeetingModal({
 
           {/* Quick Header Controls */}
           <div className="flex items-center space-x-2">
-            {/* Layout Toggle: WhatsApp PiP vs Split View */}
+            {/* Layout Toggle: PiP vs Split View */}
             <button
               onClick={() => setLayoutMode(layoutMode === 'whatsapp' ? 'split' : 'whatsapp')}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-white/10 bg-slate-900 hover:bg-slate-800 text-xs text-slate-200 font-medium cursor-pointer transition-all"
-              title="Toggle WhatsApp PiP vs Side-by-Side Split View"
+              title="Toggle PiP vs Side-by-Side Split View"
             >
               <Layout className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">{layoutMode === 'whatsapp' ? 'WhatsApp PiP' : 'Split View'}</span>
+              <span className="hidden sm:inline">{layoutMode === 'whatsapp' ? 'PiP View' : 'Split View'}</span>
             </button>
 
             {/* Language Selector */}
@@ -686,7 +731,7 @@ export default function VideoMeetingModal({
           </div>
         )}
 
-        {/* Main Stage: Hardware-Accelerated 60fps Real Video (WhatsApp Style) */}
+        {/* Main Stage: Hardware-Accelerated 60fps Real Video */}
         <div className="flex-1 p-3 sm:p-4 bg-[#080f14] relative overflow-hidden flex flex-col justify-center">
           <div className={layoutMode === 'split' ? 'w-full h-full grid grid-cols-1 md:grid-cols-2 gap-4' : 'relative w-full h-full overflow-hidden rounded-3xl'}>
             
@@ -703,7 +748,7 @@ export default function VideoMeetingModal({
                 className="w-full h-full object-cover"
               />
 
-              {/* WhatsApp Waiting Screen when remote camera is connecting or waiting */}
+              {/* Waiting Screen before peer accepts / receives call */}
               {!hasRemoteVideo && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0b141a] text-center p-6 z-20">
                   <div className="relative w-24 h-24 mb-4 flex items-center justify-center">
@@ -717,7 +762,7 @@ export default function VideoMeetingModal({
                   </h4>
                   <p className="text-xs text-emerald-400 mt-1.5 font-mono flex items-center space-x-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
-                    <span>Connecting WhatsApp Video Consultation...</span>
+                    <span>Video Consultation</span>
                   </p>
                   <div className="mt-3 px-3 py-1 rounded-full bg-slate-900 border border-white/10 text-[10px] font-mono text-slate-300">
                     Room: {roomId}
@@ -773,7 +818,7 @@ export default function VideoMeetingModal({
 
           </div>
 
-          {/* WhatsApp Live Subtitles Overlay */}
+          {/* Live Subtitles Overlay */}
           {captionsEnabled && (
             <div className="absolute bottom-24 left-6 right-6 z-30 pointer-events-none flex flex-col items-center justify-end text-center">
               <div className="space-y-1.5 max-w-2xl px-5 py-2.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 shadow-2xl">
@@ -877,7 +922,7 @@ export default function VideoMeetingModal({
             </div>
           )}
 
-          {/* Floating WhatsApp Bottom Controls Capsule */}
+          {/* Floating Bottom Controls Capsule */}
           <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center space-x-3 bg-[#111b21]/95 backdrop-blur-2xl border border-white/15 px-6 py-3 rounded-full shadow-2xl">
             {/* Microphone Toggle */}
             <button
