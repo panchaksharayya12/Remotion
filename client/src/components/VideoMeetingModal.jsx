@@ -21,6 +21,12 @@ export default function VideoMeetingModal({
   meeting,
   currentUser
 }) {
+  const isTherapist = currentUser?.role === 'therapist';
+  const myRole = currentUser?.role || 'patient';
+  const myName = currentUser?.name || (isTherapist ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma');
+  const roomId = meeting?.room_id || 'remotion-room-pt_1';
+  const isPolite = myRole === 'patient'; // Patient acts as polite peer during offer collisions
+
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
@@ -72,13 +78,6 @@ export default function VideoMeetingModal({
   // Multi-tier unique peer sender identifier
   const senderIdRef = useRef('peer_' + Math.random().toString(36).substring(2, 9));
   const bcRef = useRef(null);
-
-  // Standardized clinical room ID
-  const roomId = meeting?.room_id || 'remotion-room-pt_1';
-  const isTherapist = currentUser?.role === 'therapist';
-  const myName = currentUser?.name || (isTherapist ? 'Dr. Rajesh Kulkarni, PT' : 'Asha Sharma');
-  const myRole = currentUser?.role || 'patient';
-  const isPolite = myRole === 'patient'; // Patient acts as polite peer during offer collisions
 
   // Multi-tier signaling dispatcher (BroadcastChannel + localStorage + Serverless HTTP + ntfy.sh)
   const postSignal = (type, payload = {}) => {
@@ -273,6 +272,65 @@ export default function VideoMeetingModal({
     } else if (data.type === 'leave') {
       setHasRemotePeer(false);
       setConnectionStatus('Peer left the consultation room.');
+    }
+  };
+
+  // Continuous Speech Recognition Subtitles Engine
+  const startSpeechSubtitles = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      try {
+        if (recognitionRef.current) {
+          try { recognitionRef.current.stop(); } catch (e) {}
+        }
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = selectedLanguage === 'hi' ? 'hi-IN' :
+                           selectedLanguage === 'kn' ? 'kn-IN' :
+                           selectedLanguage === 'ta' ? 'ta-IN' :
+                           selectedLanguage === 'te' ? 'te-IN' : 'en-US';
+
+        recognition.onresult = (event) => {
+          let transcript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            transcript += event.results[i][0].transcript;
+          }
+          setLiveTranscript(transcript);
+
+          if (event.results[event.results.length - 1].isFinal) {
+            const cleanText = transcript.trim();
+            if (cleanText) {
+              const newCap = {
+                speaker: myName,
+                text: cleanText,
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              };
+
+              setCaptions(prev => [...prev.slice(-3), newCap]);
+              setLiveTranscript('');
+              postSignal('caption', { caption: newCap });
+            }
+          }
+        };
+
+        recognition.onerror = (e) => {
+          if (e.error === 'no-speech') return; // Expected when silent
+          console.warn('Speech recognition status:', e.error);
+        };
+
+        // Continuous Loop: Auto-restart recognition when voice pauses
+        recognition.onend = () => {
+          if (recognitionRef.current && captionsEnabled && isOpen) {
+            try { recognition.start(); } catch (e) {}
+          }
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+      } catch (err) {
+        console.warn('Speech recognition activation warning:', err);
+      }
     }
   };
 
@@ -529,65 +587,6 @@ export default function VideoMeetingModal({
       teardownMeeting();
     };
   }, [isOpen, roomId]);
-
-  // Continuous Speech Recognition Subtitles Engine
-  const startSpeechSubtitles = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      try {
-        if (recognitionRef.current) {
-          try { recognitionRef.current.stop(); } catch (e) {}
-        }
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = selectedLanguage === 'hi' ? 'hi-IN' :
-                           selectedLanguage === 'kn' ? 'kn-IN' :
-                           selectedLanguage === 'ta' ? 'ta-IN' :
-                           selectedLanguage === 'te' ? 'te-IN' : 'en-US';
-
-        recognition.onresult = (event) => {
-          let transcript = '';
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            transcript += event.results[i][0].transcript;
-          }
-          setLiveTranscript(transcript);
-
-          if (event.results[event.results.length - 1].isFinal) {
-            const cleanText = transcript.trim();
-            if (cleanText) {
-              const newCap = {
-                speaker: myName,
-                text: cleanText,
-                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-              };
-
-              setCaptions(prev => [...prev.slice(-3), newCap]);
-              setLiveTranscript('');
-              postSignal('caption', { caption: newCap });
-            }
-          }
-        };
-
-        recognition.onerror = (e) => {
-          if (e.error === 'no-speech') return; // Expected when silent
-          console.warn('Speech recognition status:', e.error);
-        };
-
-        // Continuous Loop: Auto-restart recognition when voice pauses
-        recognition.onend = () => {
-          if (recognitionRef.current && captionsEnabled && isOpen) {
-            try { recognition.start(); } catch (e) {}
-          }
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-      } catch (err) {
-        console.warn('Speech recognition activation warning:', err);
-      }
-    }
-  };
 
   // Re-engage speech recognition on language or toggle change
   useEffect(() => {

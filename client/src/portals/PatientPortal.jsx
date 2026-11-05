@@ -1812,7 +1812,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
         <VideoMeetingModal
           isOpen={true}
           meeting={selectedMeeting}
-          currentUser={currentUser || { role: 'patient', name: patient.name }}
+          currentUser={currentUser || { role: 'patient', name: patient?.name || 'Asha Sharma' }}
           onClose={() => setSelectedMeeting(null)}
         />
       )}

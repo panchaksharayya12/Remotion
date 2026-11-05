@@ -45,6 +45,11 @@ export default class ErrorBoundary extends React.Component {
               <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                 The clinical interface recovered from a display interruption. All patient records, prescriptions, and telemetry data remain safely preserved.
               </p>
+              {this.state.error && (
+                <div className="text-[10px] font-mono text-slate-500 bg-slate-100 p-2 rounded-lg mt-2 max-w-sm mx-auto truncate">
+                  {this.state.error.message || String(this.state.error)}
+                </div>
+              )}
             </div>
 
             <div className="pt-2 flex items-center justify-center space-x-3">

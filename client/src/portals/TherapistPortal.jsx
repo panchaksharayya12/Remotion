@@ -3489,7 +3489,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           isOpen={true}
           onClose={() => setSelectedMeeting(null)}
           meeting={selectedMeeting}
-          currentUser={currentUser}
+          currentUser={currentUser || { role: 'therapist', name: 'Dr. Rajesh Kulkarni, PT' }}
         />
       )}
 
