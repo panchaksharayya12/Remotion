@@ -571,7 +571,7 @@ export default function ReachTouch3D({
             autoPlay
             playsInline
             muted
-            className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-60 pointer-events-none"
+            className="absolute inset-0 w-full h-full object-cover -scale-x-100 opacity-100 pointer-events-none"
           />
         )}
 

@@ -604,10 +604,10 @@ export default async function handler(req, res) {
             ? (PATIENTS.find(p => p.id === sender_id || p.user_id === sender_id)?.id || 'pt_1')
             : 'pt_1'));
 
-      // Server deduplication: check if exact message was received within 5 seconds
+      // Server deduplication: check if exact message was received within 60 seconds
       const existing = CLINICAL_MESSAGES.find(
         m => (body.id && m.id === body.id) ||
-             (m.sender_id === sender_id && m.message_text === message_text && (Date.now() - new Date(m.created_at).getTime() < 5000))
+             (m.sender_id === sender_id && m.message_text.trim().toLowerCase() === message_text.trim().toLowerCase() && (Date.now() - new Date(m.created_at).getTime() < 60000))
       );
 
       const patientThread = CLINICAL_MESSAGES.filter(

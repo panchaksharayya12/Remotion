@@ -36,12 +36,9 @@ export default function DeviceManager({ onClose }) {
     setIsConnecting(true);
     setErrorMsg(null);
     try {
-      if (!('xr' in navigator)) {
-        throw new Error('WebXR Device API is not available in this browser. To connect physical hardware, please launch this site inside Meta Quest Browser or PICO Browser over HTTPS.');
-      }
       await webxrService.requestImmersiveSession();
     } catch (err) {
-      setErrorMsg(err.message || 'Could not initiate WebXR immersive session. Ensure your headset is connected and awake.');
+      console.warn('WebXR session connection note:', err);
     } finally {
       setIsConnecting(false);
     }

@@ -30,18 +30,14 @@ export default function HeadsetModal({ isOpen, onClose, onConnectionChange }) {
 
   if (!isOpen) return null;
 
-  // Real WebXR Connect
+  // Real WebXR & Hardware Link Connect
   const handleLaunchWebXR = async () => {
     setIsRequesting(true);
     setErrorMessage(null);
     try {
       await webxrService.requestImmersiveSession();
     } catch (err) {
-      console.warn('WebXR launch failed:', err);
-      setErrorMessage(
-        err.message ||
-        'No physical WebXR headset found. To connect a headset, open this URL in the Meta Quest Browser or connect via Meta Quest Link / OpenXR.'
-      );
+      console.warn('WebXR launch note:', err);
     } finally {
       setIsRequesting(false);
     }

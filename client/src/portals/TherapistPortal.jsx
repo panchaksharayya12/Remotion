@@ -120,8 +120,8 @@ const DEFAULT_APPOINTMENTS = [
 
 // Bulletproof Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
 const isSameSenderRole = (m1, m2) => {
-  const isDoc1 = m1.sender_id === 'u_therapist_1' || m1.sender_name?.includes('Rajesh') || m1.sender_id?.includes('therapist');
-  const isDoc2 = m2.sender_id === 'u_therapist_1' || m2.sender_name?.includes('Rajesh') || m2.sender_id?.includes('therapist');
+  const isDoc1 = m1.sender_id === 'u_therapist_1' || m1.sender_name?.includes('Rajesh') || m1.sender_id?.includes('therapist') || m1.sender_role === 'therapist';
+  const isDoc2 = m2.sender_id === 'u_therapist_1' || m2.sender_name?.includes('Rajesh') || m2.sender_id?.includes('therapist') || m2.sender_role === 'therapist';
   return isDoc1 === isDoc2;
 };
 
@@ -139,16 +139,12 @@ const mergeAndDeduplicateMessages = (prevList, incoming) => {
       continue;
     }
 
-    // 2. Bulletproof text + sender-side match within 90 seconds
+    // 2. Exact text + sender match in thread (strictly prevents duplicate balloons)
     const normItemText = (item.message_text || '').trim().toLowerCase();
     const dupIdx = merged.findIndex(m => {
       const normMText = (m.message_text || '').trim().toLowerCase();
       if (normMText !== normItemText) return false;
-      if (!isSameSenderRole(m, item)) return false;
-      const t1 = new Date(m.created_at || 0).getTime();
-      const t2 = new Date(item.created_at || 0).getTime();
-      if (!t1 || !t2) return true;
-      return Math.abs(t1 - t2) < 90000;
+      return isSameSenderRole(m, item);
     });
 
     if (dupIdx !== -1) {
@@ -207,6 +203,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const syncChannelRef = useRef(null);
@@ -837,7 +834,10 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
 
   const handleSendTherapistMessage = async (customText = null) => {
     const textToSend = (customText || chatInput).trim();
-    if (!textToSend || !selectedPatient) return;
+    if (!textToSend || !selectedPatient || isSendingMessage) return;
+
+    setIsSendingMessage(true);
+    if (!customText) setChatInput('');
 
     const targetUserId = selectedPatient.user_id || selectedPatient.id || 'u_patient_1';
     const tempId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
@@ -854,7 +854,6 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
 
     // 1. Instant optimistic local UI update (0ms, WhatsApp feel)
     setChatMessages(prev => mergeAndDeduplicateMessages(prev, msgObj));
-    if (!customText) setChatInput('');
 
     // 2. Broadcast immediately across same-browser tabs (0ms)
     if (syncChannelRef.current) {
@@ -902,6 +901,8 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       });
     } catch (err) {
       console.error('Failed to send therapist message:', err);
+    } finally {
+      setIsSendingMessage(false);
     }
   };
 

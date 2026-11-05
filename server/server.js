@@ -1244,8 +1244,8 @@ app.post('/api/messages', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Receiver ID and message content required' });
     }
 
-    const messageId = uuidv4();
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const messageId = req.body.id || uuidv4();
+    const now = req.body.created_at || new Date().toISOString();
 
     // Advanced Multilingual Healthcare Translation Engine
     let translatedText = message_text;

@@ -80,267 +80,6 @@ export default function VideoMeetingModal({
   const myRole = currentUser?.role || 'patient';
   const isPolite = myRole === 'patient'; // Patient acts as polite peer during offer collisions
 
-  // High-Fidelity Photorealistic Medical Video Generator (Lifelike face, natural eye blinks, speaking mouth, and clinical HUD)
-  const createLifelikeVideoFeed = (feedRole, feedName, animRef) => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 640;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-    let phase = 0;
-    let blinkTimer = 0;
-    let isBlinking = false;
-    const isDoc = feedRole === 'therapist';
-
-    const draw = () => {
-      animRef.current = requestAnimationFrame(draw);
-      phase += 0.04;
-      blinkTimer += 1;
-      if (blinkTimer > 110) {
-        isBlinking = true;
-        if (blinkTimer > 118) {
-          isBlinking = false;
-          blinkTimer = 0;
-        }
-      }
-
-      // 1. Realistic Telehealth Studio Background
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, 480);
-      if (isDoc) {
-        bgGrad.addColorStop(0, '#0b1329');
-        bgGrad.addColorStop(0.5, '#0f172a');
-        bgGrad.addColorStop(1, '#020617');
-      } else {
-        bgGrad.addColorStop(0, '#042f2e');
-        bgGrad.addColorStop(0.5, '#0f172a');
-        bgGrad.addColorStop(1, '#020617');
-      }
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, 640, 480);
-
-      // Subtle background studio lighting bokeh
-      ctx.fillStyle = isDoc ? 'rgba(37, 99, 235, 0.08)' : 'rgba(20, 184, 166, 0.08)';
-      ctx.beginPath();
-      ctx.arc(160, 140, 120, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(480, 260, 140, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Frosted vertical studio divider lines
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
-      ctx.lineWidth = 2;
-      for (let x = 60; x < 640; x += 100) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, 480);
-        ctx.stroke();
-      }
-
-      // Micro-movements (breathing + natural head tilt)
-      const breathY = Math.sin(phase * 1.5) * 2.5;
-      const headTilt = Math.sin(phase * 0.8) * 1.5;
-      const headX = 320 + headTilt;
-      const headY = 190 + breathY;
-
-      // 2. Torso / Lab Coat / Recovery Clothing
-      ctx.save();
-      if (isDoc) {
-        // Blue Scrubs V-Neck
-        ctx.fillStyle = '#1e3a8a';
-        ctx.beginPath();
-        ctx.ellipse(headX, 420 + breathY, 150, 120, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // White Consultation Lab Coat
-        ctx.fillStyle = '#f8fafc';
-        ctx.beginPath();
-        ctx.moveTo(headX - 145, 480);
-        ctx.lineTo(headX - 100, 310 + breathY);
-        ctx.lineTo(headX - 35, 335 + breathY);
-        ctx.lineTo(headX, 480);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.moveTo(headX + 145, 480);
-        ctx.lineTo(headX + 100, 310 + breathY);
-        ctx.lineTo(headX + 35, 335 + breathY);
-        ctx.lineTo(headX, 480);
-        ctx.closePath();
-        ctx.fill();
-
-        // Stethoscope Tubing and Chest Piece
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.arc(headX, 290 + breathY, 55, 0.2, Math.PI - 0.2);
-        ctx.stroke();
-
-        ctx.fillStyle = '#94a3b8';
-        ctx.beginPath();
-        ctx.arc(headX, 350 + breathY, 11, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      } else {
-        // Patient Comfortable Rehabilitation Top
-        ctx.fillStyle = '#0f766e';
-        ctx.beginPath();
-        ctx.ellipse(headX, 420 + breathY, 140, 115, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-
-      // 3. Neck
-      ctx.fillStyle = isDoc ? '#d49b6a' : '#d99b70';
-      ctx.fillRect(headX - 25, headY + 50, 50, 45);
-
-      // 4. Head & Face
-      ctx.fillStyle = isDoc ? '#dca77a' : '#e2aa7d';
-      ctx.beginPath();
-      ctx.ellipse(headX, headY, 65, 82, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // 5. Hair
-      ctx.fillStyle = '#1c1917';
-      ctx.beginPath();
-      if (isDoc) {
-        // Professional side-part hair
-        ctx.ellipse(headX, headY - 45, 68, 50, -0.05, Math.PI, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(headX - 45, headY - 15, 20, 40, 0.2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(headX + 45, headY - 15, 20, 40, -0.2, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        // Neatly groomed hair with side contour
-        ctx.ellipse(headX, headY - 40, 70, 52, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(headX - 55, headY + 5, 22, 60, 0.1, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(headX + 55, headY + 5, 22, 60, -0.1, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // 6. Eyebrows
-      ctx.fillStyle = '#292524';
-      const browMove = Math.sin(phase * 2) * 1.5;
-      ctx.fillRect(headX - 48, headY - 24 + browMove, 30, 4.5);
-      ctx.fillRect(headX + 18, headY - 24 + browMove, 30, 4.5);
-
-      // 7. Eyes (with natural blinking)
-      if (isBlinking) {
-        ctx.strokeStyle = '#44403c';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(headX - 45, headY - 8);
-        ctx.lineTo(headX - 18, headY - 8);
-        ctx.moveTo(headX + 18, headY - 8);
-        ctx.lineTo(headX + 45, headY - 8);
-        ctx.stroke();
-      } else {
-        // Sclera
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.ellipse(headX - 32, headY - 8, 13, 8.5, 0, 0, Math.PI * 2);
-        ctx.ellipse(headX + 32, headY - 8, 13, 8.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Iris
-        ctx.fillStyle = '#3f2512';
-        ctx.beginPath();
-        ctx.arc(headX - 32, headY - 8, 6.5, 0, Math.PI * 2);
-        ctx.arc(headX + 32, headY - 8, 6.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Pupil
-        ctx.fillStyle = '#0a0a0a';
-        ctx.beginPath();
-        ctx.arc(headX - 32, headY - 8, 3.5, 0, Math.PI * 2);
-        ctx.arc(headX + 32, headY - 8, 3.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Catchlight reflections
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(headX - 34, headY - 10, 1.8, 0, Math.PI * 2);
-        ctx.arc(headX + 30, headY - 10, 1.8, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // 8. Nose
-      ctx.strokeStyle = 'rgba(154, 82, 38, 0.4)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(headX, headY - 12);
-      ctx.lineTo(headX - 3, headY + 12);
-      ctx.lineTo(headX + 5, headY + 14);
-      ctx.stroke();
-
-      // 9. Mouth (speaking rhythmically)
-      const mouthOpen = Math.max(1, Math.sin(phase * 4) * 6 + 3);
-      ctx.fillStyle = '#b91c1c';
-      ctx.beginPath();
-      ctx.ellipse(headX, headY + 36, 14, mouthOpen, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#7f1d1d';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // 10. Live Telehealth Biofeedback & Broadcast HUD
-      // Top Status Pill
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
-      if (ctx.roundRect) ctx.roundRect(16, 16, 260, 32, 10);
-      else ctx.fillRect(16, 16, 260, 32);
-      ctx.fill();
-      ctx.strokeStyle = isDoc ? 'rgba(59, 130, 246, 0.5)' : 'rgba(20, 184, 166, 0.5)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      ctx.fillStyle = '#ef4444';
-      ctx.beginPath();
-      ctx.arc(32, 32, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px monospace';
-      ctx.textAlign = 'left';
-      ctx.fillText(isDoc ? 'CLINICAL FEED • WEBRTC HD' : 'PATIENT FEED • WEBRTC HD', 44, 35);
-
-      // Top Right Metric
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
-      if (ctx.roundRect) ctx.roundRect(420, 16, 204, 32, 10);
-      else ctx.fillRect(420, 16, 204, 32);
-      ctx.fill();
-      ctx.fillStyle = '#10b981';
-      ctx.font = 'bold 10px monospace';
-      ctx.fillText('ROM: 82.5° | ACC: 96%', 432, 35);
-
-      // Bottom Participant Identifier Card
-      ctx.fillStyle = 'rgba(2, 6, 23, 0.85)';
-      if (ctx.roundRect) ctx.roundRect(16, 425, 340, 42, 12);
-      else ctx.fillRect(16, 425, 340, 42);
-      ctx.fill();
-      ctx.fillStyle = isDoc ? '#60a5fa' : '#2dd4bf';
-      ctx.font = 'bold 13px sans-serif';
-      const displayName = isDoc ? (feedName || 'Dr. Rajesh Kulkarni, PT') : `${feedName || meeting?.patient_name || 'Patient'} (Patient)`;
-      ctx.fillText(displayName, 28, 444);
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '10px monospace';
-      ctx.fillText(isDoc ? 'Supervising Clinician • 60 FPS' : 'Active Motor Rehabilitation • 60 FPS', 28, 458);
-    };
-
-    draw();
-
-    const canvasStream = canvas.captureStream ? canvas.captureStream(30) : null;
-    return canvasStream;
-  };
-
   // Multi-tier signaling dispatcher (BroadcastChannel + localStorage + Serverless HTTP + ntfy.sh)
   const postSignal = (type, payload = {}) => {
     const packet = {
@@ -499,19 +238,6 @@ export default function VideoMeetingModal({
       setHasRemotePeer(true);
       setConnectionStatus(`${data.userName || 'Peer'} connected • Live Consultation Active`);
 
-      // Ensure remote video feed is active
-      if (remoteVideoRef.current && (!remoteVideoRef.current.srcObject || !remoteVideoRef.current.srcObject.active)) {
-        const fallback = createLifelikeVideoFeed(
-          data.role || (isTherapist ? 'patient' : 'therapist'),
-          data.userName || (isTherapist ? (meeting?.patient_name || 'Patient') : (meeting?.therapist_name || 'Dr. Rajesh Kulkarni, PT')),
-          remoteAnimFrameRef
-        );
-        remoteFallbackStreamRef.current = fallback;
-        remoteVideoRef.current.srcObject = fallback;
-        remoteVideoRef.current.playsInline = true;
-        remoteVideoRef.current.play().catch(() => {});
-      }
-
       // Exactly one peer creates the initial WebRTC offer to eliminate glare
       const shouldInitiate = isTherapist || senderIdRef.current < data.senderId;
       if (pc && shouldInitiate && pc.signalingState === 'stable') {
@@ -556,7 +282,7 @@ export default function VideoMeetingModal({
       candidateQueueRef.current = [];
       let stream = null;
 
-      // 1. Acquire hardware camera & microphone
+      // 1. Acquire direct hardware camera & microphone
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           stream = await navigator.mediaDevices.getUserMedia({
@@ -565,19 +291,14 @@ export default function VideoMeetingModal({
           });
         }
       } catch (camErr) {
-        console.warn('Physical camera/mic in use or unavailable, engaging high-fidelity medical stream:', camErr);
-        // Attempt audio only if video failed
+        console.warn('Direct camera/mic in use or restricted, trying video-only or audio-only:', camErr);
         try {
-          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
-          if (audioOnly && audioOnly.getAudioTracks().length > 0) {
-            const canvasStream = createLifelikeVideoFeed(myRole, myName, animFrameRef);
-            stream = new MediaStream([canvasStream.getVideoTracks()[0], audioOnly.getAudioTracks()[0]]);
-          }
-        } catch (aErr) {}
-      }
-
-      if (!stream) {
-        stream = createLifelikeVideoFeed(myRole, myName, animFrameRef);
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        } catch (vErr) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch (aErr) {}
+        }
       }
 
       // Ensure active audio track exists for WebRTC pipe
@@ -606,19 +327,6 @@ export default function VideoMeetingModal({
         localVideoRef.current.muted = true;
         localVideoRef.current.playsInline = true;
         localVideoRef.current.play().catch(() => {});
-      }
-
-      // Initialize remote video with high-fidelity feed immediately (instant face visibility)
-      if (remoteVideoRef.current) {
-        const initialRemoteFeed = createLifelikeVideoFeed(
-          isTherapist ? 'patient' : 'therapist',
-          isTherapist ? (meeting?.patient_name || 'Patient') : (meeting?.therapist_name || 'Dr. Rajesh Kulkarni, PT'),
-          remoteAnimFrameRef
-        );
-        remoteFallbackStreamRef.current = initialRemoteFeed;
-        remoteVideoRef.current.srcObject = initialRemoteFeed;
-        remoteVideoRef.current.playsInline = true;
-        remoteVideoRef.current.play().catch(() => {});
       }
 
       // 2. Setup RTCPeerConnection
@@ -1097,7 +805,7 @@ export default function VideoMeetingModal({
               {/* Remote Video Element */}
               <div
                 onClick={isSwapped ? () => setIsSwapped(false) : undefined}
-                className={`transition-all duration-300 overflow-hidden ${
+                className={`transition-all duration-300 overflow-hidden relative flex items-center justify-center bg-slate-950 ${
                   !isSwapped
                     ? 'w-full h-full absolute inset-0 z-10'
                     : 'absolute top-4 right-4 w-36 sm:w-48 aspect-[3/4] rounded-2xl bg-slate-900 border-2 border-cyan-400/80 shadow-2xl z-30 cursor-pointer group hover:scale-105'
@@ -1110,6 +818,28 @@ export default function VideoMeetingModal({
                   playsInline
                   className="w-full h-full object-cover"
                 />
+
+                {/* Direct Video Connection Status Badge when waiting for peer */}
+                {!hasRemotePeer && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 text-center p-6 z-20">
+                    <div className="relative w-14 h-14 mb-3 flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping"></div>
+                      <div className="w-14 h-14 rounded-2xl bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                        <Video className="w-7 h-7" />
+                      </div>
+                    </div>
+                    <h4 className="text-sm font-bold text-white font-display">
+                      Direct Video Meeting Active
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                      Connecting direct camera feed with {otherPeerName}...
+                    </p>
+                    <div className="mt-2.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[10px] font-mono text-cyan-300">
+                      Room: {roomId}
+                    </div>
+                  </div>
+                )}
+
                 <div className={`bg-black/80 px-2.5 py-1 rounded-full text-white backdrop-blur-md border border-slate-700 ${
                   !isSwapped ? 'absolute top-4 left-4 z-20 text-xs' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
                 }`}>
@@ -1121,7 +851,7 @@ export default function VideoMeetingModal({
               {/* Local Video Element */}
               <div
                 onClick={!isSwapped ? () => setIsSwapped(true) : undefined}
-                className={`transition-all duration-300 overflow-hidden ${
+                className={`transition-all duration-300 overflow-hidden relative flex items-center justify-center bg-slate-950 ${
                   isSwapped
                     ? 'w-full h-full absolute inset-0 z-10'
                     : 'absolute top-4 right-4 w-36 sm:w-48 aspect-[3/4] rounded-2xl bg-slate-900 border-2 border-cyan-400/80 shadow-2xl z-30 cursor-pointer group hover:scale-105'
@@ -1133,8 +863,16 @@ export default function VideoMeetingModal({
                   autoPlay
                   playsInline
                   muted
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover -scale-x-100"
                 />
+
+                {isVideoMuted && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 text-center p-3 z-20">
+                    <VideoOff className="w-6 h-6 text-slate-500 mb-1" />
+                    <span className="text-[10px] text-slate-400 font-mono">Camera Off</span>
+                  </div>
+                )}
+
                 <div className={`bg-black/80 px-2.5 py-1 rounded-full text-white backdrop-blur-md border border-slate-700 ${
                   isSwapped ? 'absolute top-4 left-4 z-20 text-xs' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
                 }`}>
@@ -1147,13 +885,34 @@ export default function VideoMeetingModal({
             /* Split View: Side-by-Side 50/50 Dual Stage */
             <div className="w-full h-full grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Remote Feed */}
-              <div className="relative rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center">
+              <div className="relative rounded-2xl bg-slate-950 border border-slate-800 overflow-hidden flex items-center justify-center">
                 <video
                   ref={remoteVideoRef}
                   autoPlay
                   playsInline
                   className="w-full h-full object-cover"
                 />
+
+                {!hasRemotePeer && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 text-center p-6 z-20">
+                    <div className="relative w-14 h-14 mb-3 flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping"></div>
+                      <div className="w-14 h-14 rounded-2xl bg-cyan-950 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+                        <Video className="w-7 h-7" />
+                      </div>
+                    </div>
+                    <h4 className="text-sm font-bold text-white font-display">
+                      Direct Video Meeting Active
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                      Connecting direct camera feed with {otherPeerName}...
+                    </p>
+                    <div className="mt-2.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[10px] font-mono text-cyan-300">
+                      Room: {roomId}
+                    </div>
+                  </div>
+                )}
+
                 <div className="absolute top-3 left-3 z-20 flex items-center space-x-1.5 bg-black/70 px-2.5 py-1 rounded-full text-[10px] text-white backdrop-blur-md border border-slate-700">
                   <Users className="w-3 h-3 text-cyan-400" />
                   <span className="font-bold">{otherPeerName}</span>
@@ -1161,14 +920,22 @@ export default function VideoMeetingModal({
               </div>
 
               {/* Local Feed */}
-              <div className="relative rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center">
+              <div className="relative rounded-2xl bg-slate-950 border border-slate-800 overflow-hidden flex items-center justify-center">
                 <video
                   ref={localVideoRef}
                   autoPlay
                   playsInline
                   muted
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover -scale-x-100"
                 />
+
+                {isVideoMuted && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/95 text-center p-3 z-20">
+                    <VideoOff className="w-6 h-6 text-slate-500 mb-1" />
+                    <span className="text-[10px] text-slate-400 font-mono">Camera Off</span>
+                  </div>
+                )}
+
                 <div className="absolute top-3 left-3 z-20 flex items-center space-x-1.5 bg-black/70 px-2.5 py-1 rounded-full text-[10px] text-white backdrop-blur-md border border-slate-700">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                   <span className="font-bold">You ({myName})</span>

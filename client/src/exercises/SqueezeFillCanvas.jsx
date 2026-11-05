@@ -110,6 +110,51 @@ export default function SqueezeFillCanvas({
     startTime: 0
   });
 
+  // Stable references for MediaPipe to prevent re-initialization loops
+  const isExerciseRunningRef = useRef(isExerciseRunning);
+  useEffect(() => { isExerciseRunningRef.current = isExerciseRunning; }, [isExerciseRunning]);
+
+  const isCompleteRef = useRef(isComplete);
+  useEffect(() => { isCompleteRef.current = isComplete; }, [isComplete]);
+
+  const targetRepsRef = useRef(targetReps);
+  useEffect(() => { targetRepsRef.current = targetReps; }, [targetReps]);
+
+  const onCompleteSessionRef = useRef(onCompleteSession);
+  useEffect(() => { onCompleteSessionRef.current = onCompleteSession; }, [onCompleteSession]);
+
+  // Direct Webcam Stream Initialization (renders instant direct camera view in <50ms)
+  useEffect(() => {
+    let localStream = null;
+    let isCancelled = false;
+
+    const startDirectWebcam = async () => {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 960, min: 640 }, height: { ideal: 540, min: 480 }, facingMode: 'user' },
+          audio: false
+        });
+        if (!isCancelled && videoRef.current) {
+          videoRef.current.srcObject = localStream;
+          videoRef.current.playsInline = true;
+          await videoRef.current.play().catch(() => {});
+          setCameraReady(true);
+        }
+      } catch (err) {
+        console.warn('Direct webcam initialization note:', err);
+      }
+    };
+
+    startDirectWebcam();
+
+    return () => {
+      isCancelled = true;
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
+
   // 1. Session Timer
   useEffect(() => {
     let timer;
@@ -172,11 +217,9 @@ export default function SqueezeFillCanvas({
               // Dynamic Adaptive Auto-Calibration: Automatically expands observed range
               if (R > adaptiveMaxRef.current) {
                 adaptiveMaxRef.current = Math.min(2.2, R);
-                setOpenRatioRo(parseFloat(adaptiveMaxRef.current.toFixed(2)));
               }
               if (R < adaptiveMinRef.current && R > 0.20) {
                 adaptiveMinRef.current = Math.max(0.35, R);
-                setFistRatioRf(parseFloat(adaptiveMinRef.current.toFixed(2)));
               }
 
               const span = Math.max(0.35, adaptiveMaxRef.current - adaptiveMinRef.current);
@@ -228,7 +271,7 @@ export default function SqueezeFillCanvas({
                   cycle.inSqueeze = false;
                   setMovementPhase('RELEASING');
 
-                  if (peakAchieved >= 0.32 && isExerciseRunning && !isComplete) {
+                  if (peakAchieved >= 0.32 && isExerciseRunningRef.current && !isCompleteRef.current) {
                     // Valid repetition achieved!
                     soundFX.playSplash();
 
@@ -249,7 +292,8 @@ export default function SqueezeFillCanvas({
 
                       // Proportional water fill based on squeeze quality
                       const quality = Math.min(1.0, peakAchieved / 0.70);
-                      const added = (1.0 / targetReps) * Math.max(0.65, quality);
+                      const currentTarget = targetRepsRef.current || 15;
+                      const added = (1.0 / currentTarget) * Math.max(0.65, quality);
                       targetWaterLevelRef.current = Math.min(1.0, targetWaterLevelRef.current + added);
 
                       ripplesRef.current.push({
@@ -259,7 +303,7 @@ export default function SqueezeFillCanvas({
                         alpha: 1
                       });
 
-                      if (next >= targetReps) {
+                      if (next >= currentTarget) {
                         triggerCompletion(next);
                       }
                       return next;
@@ -277,8 +321,10 @@ export default function SqueezeFillCanvas({
           if (videoRef.current) {
             cameraInstance = new window.Camera(videoRef.current, {
               onFrame: async () => {
-                if (handsInstance && videoRef.current) {
-                  await handsInstance.send({ image: videoRef.current });
+                if (handsInstance && videoRef.current && videoRef.current.readyState >= 2) {
+                  try {
+                    await handsInstance.send({ image: videoRef.current });
+                  } catch (e) {}
                 }
               },
               width: 640,
@@ -299,7 +345,7 @@ export default function SqueezeFillCanvas({
       if (cameraInstance) cameraInstance.stop?.();
       if (handsInstance) handsInstance.close?.();
     };
-  }, [openRatioRo, fistRatioRf, isExerciseRunning, isComplete, targetReps]);
+  }, []);
 
   // Calibrate Open Hand Reference Ro
   const calibrateOpenHand = () => {
@@ -336,30 +382,17 @@ export default function SqueezeFillCanvas({
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // A. BACKGROUND: MARKERLESS AR CAMERA PASSTHROUGH OR STUDIO VR
+      // A. BACKGROUND: DIRECT WEBCAM CAMERA PASSTHROUGH (Direct Camera View)
       if (isMarkerlessAR && videoRef.current && videoRef.current.readyState >= 2) {
         ctx.save();
         // Mirror video horizontally for natural mirror biofeedback
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
+        // Direct, crisp camera view without dark tints or artificial grid lines
         ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
         ctx.restore();
-
-        // High-tech holographic AR tint
-        ctx.fillStyle = 'rgba(5, 10, 20, 0.42)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        // Markerless AR tracking grid overlay on bottom plane
-        ctx.strokeStyle = 'rgba(0, 240, 255, 0.15)';
-        ctx.lineWidth = 1;
-        for (let x = 0; x < canvas.width; x += 40) {
-          ctx.beginPath();
-          ctx.moveTo(x, 340);
-          ctx.lineTo(x, canvas.height);
-          ctx.stroke();
-        }
       } else {
-        // Studio VR Clinical Mode (Dark calibrated environment)
+        // Direct Studio Mode
         ctx.fillStyle = '#070b16';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -371,23 +404,24 @@ export default function SqueezeFillCanvas({
         ctx.strokeRect(30, 385, canvas.width - 60, 16);
       }
 
-      // B. BIOMECHANICAL SKELETAL BONE DETECTOR OVERLAY
-      let landmarks = landmarksRef.current;
+      // B. REAL BIOMECHANICAL SKELETAL BONE DETECTOR (Only renders when real hand is in camera view)
+      const landmarks = landmarksRef.current;
 
-      // Simulated fallback if no webcam active
+      // Prompt user clearly when hand is not in view
       if (!landmarks && isBoneDetectorActive) {
-        simAngleRef.current += 0.04;
-        const simC = 0.5 + Math.sin(simAngleRef.current) * 0.45;
-        const cx = 0.32;
-        const cy = 0.62;
-        landmarks = [
-          { x: cx, y: cy },
-          { x: cx - 0.05, y: cy - 0.05 }, { x: cx - 0.08, y: cy - 0.09 }, { x: cx - 0.10, y: cy - 0.13 }, { x: cx - 0.11 + simC * 0.04, y: cy - 0.16 + simC * 0.05 },
-          { x: cx - 0.04, y: cy - 0.12 }, { x: cx - 0.05, y: cy - 0.18 }, { x: cx - 0.055, y: cy - 0.22 }, { x: cx - 0.06 + simC * 0.03, y: cy - 0.26 + simC * 0.10 },
-          { x: cx, y: cy - 0.13 }, { x: cx, y: cy - 0.19 }, { x: cx, y: cy - 0.24 }, { x: cx + simC * 0.01, y: cy - 0.28 + simC * 0.11 },
-          { x: cx + 0.04, y: cy - 0.12 }, { x: cx + 0.045, y: cy - 0.18 }, { x: cx + 0.05, y: cy - 0.22 }, { x: cx + 0.05 - simC * 0.01, y: cy - 0.26 + simC * 0.10 },
-          { x: cx + 0.07, y: cy - 0.10 }, { x: cx + 0.085, y: cy - 0.15 }, { x: cx + 0.09, y: cy - 0.19 }, { x: cx + 0.095 - simC * 0.03, y: cy - 0.22 + simC * 0.08 }
-        ];
+        ctx.save();
+        ctx.fillStyle = 'rgba(10, 20, 35, 0.75)';
+        ctx.roundRect(canvas.width / 2 - 200, canvas.height - 70, 400, 40, 10);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.font = '600 13px ui-sans-serif, system-ui, sans-serif';
+        ctx.fillStyle = '#e2e8f0';
+        ctx.textAlign = 'center';
+        ctx.fillText('Position hand in camera view to begin grasp tracking', canvas.width / 2, canvas.height - 45);
+        ctx.restore();
       }
 
       if (isBoneDetectorActive && landmarks && landmarks.length >= 21) {

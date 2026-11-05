@@ -633,7 +633,7 @@ class ApiService {
         try {
           const stored = JSON.parse(localStorage.getItem('remotion_clinical_chat_messages') || '[]');
           const list = Array.isArray(stored) ? stored : [];
-          const exists = list.some(m => m.id === msg.id || (m.message_text === msg.message_text && m.sender_id === msg.sender_id && Math.abs(new Date(m.created_at).getTime() - new Date(msg.created_at).getTime()) < 30000));
+          const exists = list.some(m => m.id === msg.id || (m.message_text?.trim().toLowerCase() === msg.message_text?.trim().toLowerCase() && m.sender_id === msg.sender_id));
           if (!exists) {
             list.push(msg);
             localStorage.setItem('remotion_clinical_chat_messages', JSON.stringify(list));

@@ -21,8 +21,8 @@ import ErrorBoundary from '../components/ErrorBoundary';
 
 // Bulletproof Message Deduplication Helper (prevents double display & merges optimistic messages with server response)
 const isSameSenderRole = (m1, m2) => {
-  const isDoc1 = m1.sender_id === 'u_therapist_1' || m1.sender_name?.includes('Rajesh') || m1.sender_id?.includes('therapist');
-  const isDoc2 = m2.sender_id === 'u_therapist_1' || m2.sender_name?.includes('Rajesh') || m2.sender_id?.includes('therapist');
+  const isDoc1 = m1.sender_id === 'u_therapist_1' || m1.sender_name?.includes('Rajesh') || m1.sender_id?.includes('therapist') || m1.sender_role === 'therapist';
+  const isDoc2 = m2.sender_id === 'u_therapist_1' || m2.sender_name?.includes('Rajesh') || m2.sender_id?.includes('therapist') || m2.sender_role === 'therapist';
   return isDoc1 === isDoc2;
 };
 
@@ -40,16 +40,12 @@ const mergeAndDeduplicateMessages = (prevList, incoming) => {
       continue;
     }
 
-    // 2. Bulletproof text + sender-side match within 90 seconds
+    // 2. Exact text + sender match in thread (strictly prevents duplicate balloons)
     const normItemText = (item.message_text || '').trim().toLowerCase();
     const dupIdx = merged.findIndex(m => {
       const normMText = (m.message_text || '').trim().toLowerCase();
       if (normMText !== normItemText) return false;
-      if (!isSameSenderRole(m, item)) return false;
-      const t1 = new Date(m.created_at || 0).getTime();
-      const t2 = new Date(item.created_at || 0).getTime();
-      if (!t1 || !t2) return true;
-      return Math.abs(t1 - t2) < 90000;
+      return isSameSenderRole(m, item);
     });
 
     if (dupIdx !== -1) {
@@ -287,7 +283,9 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
   // Send message to therapist (0ms instant optimistic dispatch + multi-tier cloud sync)
   const handleSendChatMessage = async (textOverride = null) => {
     const text = (textOverride || chatInput).trim();
-    if (!text) return;
+    if (!text || isSendingChat) return;
+    setIsSendingChat(true);
+    if (!textOverride) setChatInput('');
 
     const therapistId = dashboardData?.therapist?.user_id || 'u_therapist_1';
     const tempId = 'msg_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5);
@@ -304,7 +302,6 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
 
     // 1. Instant optimistic local UI update (0ms, WhatsApp feel)
     setChatMessages(prev => mergeAndDeduplicateMessages(prev, sentMsg));
-    if (!textOverride) setChatInput('');
 
     // 2. Broadcast immediately across same-browser tabs (0ms)
     if (syncChannelRef.current) {
@@ -348,6 +345,8 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       });
     } catch (err) {
       console.warn('API send chat note:', err);
+    } finally {
+      setIsSendingChat(false);
     }
   };
 
