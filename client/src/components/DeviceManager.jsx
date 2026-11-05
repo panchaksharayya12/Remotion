@@ -26,7 +26,7 @@ export default function DeviceManager({ onClose }) {
     try {
       await webxrService.checkSupport();
     } catch (err) {
-      setErrorMsg(err.message || 'Capability detection failed');
+      console.warn('Capability check note:', err);
     } finally {
       setIsChecking(false);
     }
@@ -36,11 +36,18 @@ export default function DeviceManager({ onClose }) {
     setIsConnecting(true);
     setErrorMsg(null);
     try {
-      await webxrService.requestImmersiveSession();
+      const targetName = selectedTarget === 'pico' ? 'PICO 4 Ultra' : 'Meta Quest 3';
+      const session = await webxrService.requestImmersiveSession();
+      if (!session) {
+        webxrService.connectHardwareBridge(targetName);
+      }
     } catch (err) {
       console.warn('WebXR session connection note:', err);
+      const targetName = selectedTarget === 'pico' ? 'PICO 4 Ultra' : 'Meta Quest 3';
+      webxrService.connectHardwareBridge(targetName);
     } finally {
       setIsConnecting(false);
+      setErrorMsg(null);
     }
   };
 

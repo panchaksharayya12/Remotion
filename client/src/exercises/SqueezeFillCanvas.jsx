@@ -170,6 +170,7 @@ export default function SqueezeFillCanvas({
   useEffect(() => {
     let cameraInstance = null;
     let handsInstance = null;
+    let isProcessing = false;
 
     const initMediaPipe = async () => {
       if (typeof window !== 'undefined' && window.Hands && window.Camera) {
@@ -180,9 +181,9 @@ export default function SqueezeFillCanvas({
 
           handsInstance.setOptions({
             maxNumHands: 1,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.50,
-            minTrackingConfidence: 0.50
+            modelComplexity: 0, // Fast 60fps tracking mode
+            minDetectionConfidence: 0.35,
+            minTrackingConfidence: 0.35
           });
 
           handsInstance.onResults((results) => {
@@ -244,8 +245,8 @@ export default function SqueezeFillCanvas({
               // CONTINUOUS PARTIAL MOVEMENT SCORING STATE MACHINE
               const cycle = cycleStateRef.current;
 
-              // 1. Enter Squeeze Phase when C rises above 0.25
-              if (C >= 0.25 && !cycle.inSqueeze) {
+              // 1. Enter Squeeze Phase when C rises above 0.22
+              if (C >= 0.22 && !cycle.inSqueeze) {
                 cycle.inSqueeze = true;
                 cycle.peakC = C;
                 cycle.startTime = Date.now();
@@ -260,18 +261,18 @@ export default function SqueezeFillCanvas({
                   setPeakClosureInCycle(parseFloat(C.toFixed(2)));
                 }
 
-                if (cycle.peakC >= 0.60) {
+                if (cycle.peakC >= 0.50) {
                   setMovementPhase('HOLDING_PEAK');
                 }
 
                 // 3. Detect Release Phase when C drops back towards baseline
-                // Credit partial movements (even C >= 0.35) for motor-impaired patients!
-                if (C <= 0.22 && cycle.inSqueeze) {
+                // Credit partial movements for motor-impaired patients
+                if (C <= 0.24 && cycle.inSqueeze) {
                   const peakAchieved = cycle.peakC;
                   cycle.inSqueeze = false;
                   setMovementPhase('RELEASING');
 
-                  if (peakAchieved >= 0.32 && isExerciseRunningRef.current && !isCompleteRef.current) {
+                  if (peakAchieved >= 0.26 && isExerciseRunningRef.current && !isCompleteRef.current) {
                     // Valid repetition achieved!
                     soundFX.playSplash();
 
@@ -321,10 +322,15 @@ export default function SqueezeFillCanvas({
           if (videoRef.current) {
             cameraInstance = new window.Camera(videoRef.current, {
               onFrame: async () => {
+                if (isProcessing) return;
                 if (handsInstance && videoRef.current && videoRef.current.readyState >= 2) {
+                  isProcessing = true;
                   try {
                     await handsInstance.send({ image: videoRef.current });
-                  } catch (e) {}
+                  } catch (e) {
+                  } finally {
+                    isProcessing = false;
+                  }
                 }
               },
               width: 640,

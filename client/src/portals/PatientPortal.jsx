@@ -113,7 +113,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
   const syncChannelRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  // Synthesize pleasant WhatsApp-style message arrival audio blip
+  // Synthesize pleasant audio blip on message arrival
   const playMessageTone = () => {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -258,7 +258,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
     }
   };
 
-  // Auto-scroll to bottom of chat feed like WhatsApp
+  // Auto-scroll to bottom of chat feed seamlessly
   useEffect(() => {
     if (activeTab === 'chat') {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -300,7 +300,7 @@ export default function PatientPortal({ currentUser, onNavigateGaming }) {
       created_at: new Date().toISOString()
     };
 
-    // 1. Instant optimistic local UI update (0ms, WhatsApp feel)
+    // 1. Instant optimistic local UI update (0ms immediate responsiveness)
     setChatMessages(prev => mergeAndDeduplicateMessages(prev, sentMsg));
 
     // 2. Broadcast immediately across same-browser tabs (0ms)

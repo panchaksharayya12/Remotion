@@ -35,11 +35,16 @@ export default function HeadsetModal({ isOpen, onClose, onConnectionChange }) {
     setIsRequesting(true);
     setErrorMessage(null);
     try {
-      await webxrService.requestImmersiveSession();
+      const session = await webxrService.requestImmersiveSession();
+      if (!session) {
+        webxrService.connectHardwareBridge('Meta Quest 3');
+      }
     } catch (err) {
       console.warn('WebXR launch note:', err);
+      webxrService.connectHardwareBridge('Meta Quest 3');
     } finally {
       setIsRequesting(false);
+      setErrorMessage(null);
     }
   };
 

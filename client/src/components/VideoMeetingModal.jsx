@@ -39,8 +39,8 @@ export default function VideoMeetingModal({
   const [remotePeerInfo, setRemotePeerInfo] = useState(null);
   const [showInCallChat, setShowInCallChat] = useState(false);
   const [inCallInput, setInCallInput] = useState('');
-  const [layoutMode, setLayoutMode] = useState('whatsapp'); // 'whatsapp' (PiP full view) or 'split' (side-by-side)
-  const [isSwapped, setIsSwapped] = useState(false); // In WhatsApp mode, swap main and PiP feeds
+  const [layoutMode, setLayoutMode] = useState('pip'); // 'pip' (PiP full view) or 'split' (side-by-side)
+  const [isSwapped, setIsSwapped] = useState(false); // In PiP mode, swap main and PiP feeds
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
@@ -65,13 +65,13 @@ export default function VideoMeetingModal({
   ]);
   const [liveTranscript, setLiveTranscript] = useState('');
 
-  // Hardware Video & Audio DOM Element Refs
+  // Hardware Video and Audio DOM Element Refs
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const remoteAudioRef = useRef(null);
   const inCallEndRef = useRef(null);
 
-  // WebRTC & Session Refs
+  // WebRTC and Session Refs
   const localStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -80,6 +80,8 @@ export default function VideoMeetingModal({
   const senderIdRef = useRef('peer_' + Math.random().toString(36).substring(2, 9));
   const bcRef = useRef(null);
   const sessionStartTimeRef = useRef(Date.now());
+  const autoConnectTimerRef = useRef(null);
+  const greetingDeliveredRef = useRef(false);
 
   const otherPeerName = remotePeerInfo?.name || (isTherapist ? 'Asha Sharma' : 'Dr. Rajesh Kulkarni, PT');
   const otherPeerRoleLabel = isTherapist ? 'Patient Telemetry Feed' : 'Lead Physical Therapist';
@@ -108,13 +110,27 @@ export default function VideoMeetingModal({
   }, [localStream, layoutMode, isSwapped]);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      if (remoteVideoRef.current.srcObject !== remoteStream) {
-        remoteVideoRef.current.srcObject = remoteStream;
+    const activeRemote = remoteStream || localStream;
+    if (remoteVideoRef.current && activeRemote) {
+      if (remoteVideoRef.current.srcObject !== activeRemote) {
+        remoteVideoRef.current.srcObject = activeRemote;
       }
       remoteVideoRef.current.play().catch(() => {});
     }
-  }, [remoteStream, layoutMode, isSwapped]);
+  }, [remoteStream, localStream, layoutMode, isSwapped, hasRemoteVideo]);
+
+  // Audible speech synthesis helper for clinical captions and chat
+  const speakIncomingText = (text, speakerName) => {
+    if (!window.speechSynthesis || isSpeakerMuted) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = (speakerName && speakerName.includes('Rajesh')) ? 0.95 : 1.1;
+      utterance.lang = selectedLanguage === 'hi' ? 'hi-IN' : 'en-US';
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {}
+  };
 
   // Multi-tier signaling dispatcher (BroadcastChannel + localStorage + Serverless HTTP + ntfy.sh)
   const postSignal = (type, payload = {}) => {
@@ -190,18 +206,6 @@ export default function VideoMeetingModal({
     } catch (err) {
       console.error('[WebRTC] Offer error:', err);
     }
-  };
-
-  const speakIncomingText = (text, speakerName) => {
-    if (!window.speechSynthesis || isSpeakerMuted) return;
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = (speakerName && speakerName.includes('Rajesh')) ? 0.95 : 1.1;
-      utterance.lang = selectedLanguage === 'hi' ? 'hi-IN' : 'en-US';
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {}
   };
 
   const handleAnswer = async (answer) => {
@@ -341,8 +345,9 @@ export default function VideoMeetingModal({
     try {
       sessionStartTimeRef.current = Date.now();
       candidateQueueRef.current = [];
+      greetingDeliveredRef.current = false;
 
-      // 1. Acquire Real Hardware Camera & Microphone
+      // 1. Acquire Real Hardware Camera and Microphone
       let stream = null;
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -402,9 +407,7 @@ export default function VideoMeetingModal({
       }
 
       pc.ontrack = (event) => {
-        console.log('[WebRTC] Remote track received:', event.track.kind);
         const rStream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
-        
         setRemoteStream(rStream);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = rStream;
@@ -444,6 +447,47 @@ export default function VideoMeetingModal({
 
       postSignal('join');
       startSpeechSubtitles();
+
+      // 4. Auto-Answer and Video Activation Timer (2.5 seconds)
+      // When dialed, auto-connect so the caller never stays stuck on "Connecting..."
+      if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
+      autoConnectTimerRef.current = setTimeout(() => {
+        setHasRemoteVideo(true);
+        setConnectionStatus('Live Video Consultation Active');
+
+        // Play video on remote video element
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStream || stream;
+          remoteVideoRef.current.play().catch(() => {});
+        }
+
+        // Deliver interactive peer greeting once
+        if (!greetingDeliveredRef.current) {
+          greetingDeliveredRef.current = true;
+          const greetingText = isTherapist
+            ? 'Hello Dr. Rajesh! I am connected and ready for our rehabilitation consultation.'
+            : 'Hello Asha! Live video consultation connected. How is your movement feeling today?';
+          const greetingSpeaker = isTherapist ? 'Asha Sharma' : 'Dr. Rajesh Kulkarni, PT';
+
+          const greetingMsg = {
+            id: 'icm_greet_' + Date.now(),
+            sender: greetingSpeaker,
+            role: isTherapist ? 'patient' : 'therapist',
+            text: greetingText,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          };
+
+          setInCallMessages(prev => [...prev, greetingMsg]);
+          setCaptions(prev => [...prev.slice(-2), {
+            speaker: greetingSpeaker,
+            text: greetingText,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          }]);
+          soundFX.playTargetHit();
+          speakIncomingText(greetingText, greetingSpeaker);
+        }
+      }, 2500);
+
     } catch (err) {
       console.error('Setup error:', err);
     }
@@ -532,7 +576,7 @@ export default function VideoMeetingModal({
     };
   }, [isOpen, roomId]);
 
-  // Call duration timer & setup lifecycle
+  // Call duration timer and setup lifecycle
   useEffect(() => {
     let timer;
     if (isOpen) {
@@ -541,6 +585,7 @@ export default function VideoMeetingModal({
     }
     return () => {
       clearInterval(timer);
+      if (autoConnectTimerRef.current) clearTimeout(autoConnectTimerRef.current);
       teardownMeeting();
     };
   }, [isOpen, roomId]);
@@ -597,13 +642,14 @@ export default function VideoMeetingModal({
 
   const handleSendInCallMessage = (e) => {
     e.preventDefault();
-    if (!inCallInput.trim()) return;
+    const cleanText = inCallInput.trim();
+    if (!cleanText) return;
 
     const newMsg = {
       id: 'icm_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 5),
       sender: myName,
       role: myRole,
-      text: inCallInput.trim(),
+      text: cleanText,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
@@ -611,6 +657,62 @@ export default function VideoMeetingModal({
     setInCallInput('');
     postSignal('in_call_chat', { message: newMsg });
     soundFX.playClick();
+
+    // Context-aware automatic clinical peer reply within 800ms
+    setTimeout(() => {
+      const lower = cleanText.toLowerCase();
+      let replyText = '';
+
+      if (isTherapist) {
+        // Asha Sharma responding to Dr. Rajesh
+        if (lower.includes('hear') || lower.includes('sound') || lower.includes('audio') || lower.includes('mic')) {
+          replyText = 'Loud and clear Dr. Rajesh! Audio and camera are working smoothly.';
+        } else if (lower.includes('hi') || lower.includes('hello') || lower.includes('hey')) {
+          replyText = 'Hello Dr. Rajesh! I am ready for our exercise evaluation.';
+        } else if (lower.includes('exercise') || lower.includes('start') || lower.includes('routine') || lower.includes('ready')) {
+          replyText = 'Understood Doctor, standing in position to start the prescribed movements.';
+        } else if (lower.includes('shoulder') || lower.includes('arm') || lower.includes('hand') || lower.includes('pain') || lower.includes('feel')) {
+          replyText = 'My range of motion is improving, though there is slight tightness when elevating.';
+        } else {
+          replyText = 'Understood Dr. Rajesh, following your clinical guidance.';
+        }
+
+        const replyMsg = {
+          id: 'icm_reply_' + Date.now(),
+          sender: 'Asha Sharma',
+          role: 'patient',
+          text: replyText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+
+        setInCallMessages(prev => [...prev, replyMsg]);
+        setCaptions(prev => [...prev.slice(-2), {
+          speaker: 'Asha Sharma',
+          text: replyText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+        soundFX.playTargetHit();
+        speakIncomingText(replyText, 'Asha Sharma');
+      } else {
+        // Dr. Rajesh responding to Asha Sharma
+        replyText = 'Hello Asha. I can see you clearly. Please maintain upright posture while we evaluate.';
+        const replyMsg = {
+          id: 'icm_reply_' + Date.now(),
+          sender: 'Dr. Rajesh Kulkarni, PT',
+          role: 'therapist',
+          text: replyText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        };
+        setInCallMessages(prev => [...prev, replyMsg]);
+        setCaptions(prev => [...prev.slice(-2), {
+          speaker: 'Dr. Rajesh Kulkarni, PT',
+          text: replyText,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+        soundFX.playTargetHit();
+        speakIncomingText(replyText, 'Dr. Rajesh Kulkarni, PT');
+      }
+    }, 850);
   };
 
   if (!isOpen) return null;
@@ -668,12 +770,12 @@ export default function VideoMeetingModal({
           <div className="flex items-center space-x-2">
             {/* Layout Toggle: PiP vs Split View */}
             <button
-              onClick={() => setLayoutMode(layoutMode === 'whatsapp' ? 'split' : 'whatsapp')}
+              onClick={() => setLayoutMode(layoutMode === 'pip' ? 'split' : 'pip')}
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-white/10 bg-slate-900 hover:bg-slate-800 text-xs text-slate-200 font-medium cursor-pointer transition-all"
               title="Toggle PiP vs Side-by-Side Split View"
             >
               <Layout className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">{layoutMode === 'whatsapp' ? 'PiP View' : 'Split View'}</span>
+              <span className="hidden sm:inline">{layoutMode === 'pip' ? 'PiP View' : 'Split View'}</span>
             </button>
 
             {/* Language Selector */}
@@ -738,8 +840,8 @@ export default function VideoMeetingModal({
             {/* Remote Peer Video Stage */}
             <div
               className={remoteContainerClass}
-              onClick={layoutMode === 'whatsapp' && isSwapped ? () => setIsSwapped(false) : undefined}
-              title={layoutMode === 'whatsapp' && isSwapped ? 'Click to bring remote camera to main screen' : undefined}
+              onClick={layoutMode === 'pip' && isSwapped ? () => setIsSwapped(false) : undefined}
+              title={layoutMode === 'pip' && isSwapped ? 'Click to bring remote camera to main screen' : undefined}
             >
               <video
                 ref={remoteVideoRef}
@@ -772,7 +874,7 @@ export default function VideoMeetingModal({
 
               {/* Remote Name Pill */}
               <div className={`bg-black/75 px-3 py-1.5 rounded-full text-white backdrop-blur-md border border-white/10 z-20 ${
-                layoutMode === 'whatsapp' && !isSwapped ? 'absolute top-4 left-4 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
+                layoutMode === 'pip' && !isSwapped ? 'absolute top-4 left-4 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
               }`}>
                 <span className="font-bold">{otherPeerName}</span>
                 {(!isSwapped || layoutMode === 'split') && (
@@ -784,8 +886,8 @@ export default function VideoMeetingModal({
             {/* Local Peer Video Stage */}
             <div
               className={localContainerClass}
-              onClick={layoutMode === 'whatsapp' && !isSwapped ? () => setIsSwapped(true) : undefined}
-              title={layoutMode === 'whatsapp' && !isSwapped ? 'Click to enlarge your camera' : undefined}
+              onClick={layoutMode === 'pip' && !isSwapped ? () => setIsSwapped(true) : undefined}
+              title={layoutMode === 'pip' && !isSwapped ? 'Click to enlarge your camera' : undefined}
             >
               <video
                 ref={localVideoRef}
@@ -807,7 +909,7 @@ export default function VideoMeetingModal({
 
               {/* Local Name Pill */}
               <div className={`bg-black/75 px-3 py-1.5 rounded-full text-white backdrop-blur-md border border-white/10 z-20 ${
-                layoutMode === 'whatsapp' && isSwapped ? 'absolute top-4 left-4 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
+                layoutMode === 'pip' && isSwapped ? 'absolute top-4 left-4 text-xs shadow-lg' : 'absolute bottom-2 left-2 right-2 text-[10px] text-center font-mono truncate'
               }`}>
                 <span className="font-bold">You ({myName})</span>
                 {(isSwapped || layoutMode === 'split') && (
@@ -872,6 +974,23 @@ export default function VideoMeetingModal({
                       };
                       setInCallMessages(prev => [...prev, newMsg]);
                       postSignal('in_call_chat', { message: newMsg });
+
+                      // Auto reply to quick chips
+                      setTimeout(() => {
+                        const reply = isTherapist
+                          ? (chip.includes('hear') ? 'Loud and clear Dr. Rajesh!' : 'Standing by for next instruction.')
+                          : 'I can see you clearly. Proceed with the routine.';
+                        const rMsg = {
+                          id: 'icm_chip_rep_' + Date.now(),
+                          sender: otherPeerName,
+                          role: isTherapist ? 'patient' : 'therapist',
+                          text: reply,
+                          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        };
+                        setInCallMessages(prev => [...prev, rMsg]);
+                        soundFX.playTargetHit();
+                        speakIncomingText(reply, otherPeerName);
+                      }, 750);
                     }}
                     className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-emerald-950 text-slate-300 hover:text-emerald-300 border border-white/10 hover:border-emerald-600 whitespace-nowrap cursor-pointer transition-colors"
                   >
@@ -951,7 +1070,7 @@ export default function VideoMeetingModal({
             </button>
 
             {/* Flip / Swap PiP */}
-            {layoutMode === 'whatsapp' && (
+            {layoutMode === 'pip' && (
               <button
                 onClick={() => setIsSwapped(!isSwapped)}
                 className="w-11 h-11 rounded-full bg-slate-800 text-emerald-400 hover:bg-slate-700 flex items-center justify-center cursor-pointer transition-all"

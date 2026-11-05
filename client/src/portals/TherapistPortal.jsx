@@ -228,7 +228,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     email: ''
   });
 
-  // Synthesize pleasant WhatsApp-style message arrival audio blip
+  // Synthesize pleasant message arrival audio blip
   const playMessageTone = () => {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -852,7 +852,7 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       created_at: new Date().toISOString()
     };
 
-    // 1. Instant optimistic local UI update (0ms, WhatsApp feel)
+    // 1. Instant optimistic local UI update (0ms immediate responsiveness)
     setChatMessages(prev => mergeAndDeduplicateMessages(prev, msgObj));
 
     // 2. Broadcast immediately across same-browser tabs (0ms)
