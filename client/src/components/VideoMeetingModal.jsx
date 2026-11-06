@@ -45,7 +45,12 @@ export default function VideoMeetingModal({
   const [captionsEnabled, setCaptionsEnabled] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState('en');
   const [connectionStatus, setConnectionStatus] = useState('Initiating Call...');
+  const [connectionDetailedState, setConnectionDetailedState] = useState('initiating'); // 'initiating', 'calling', 'connecting_media', 'waiting_camera', 'camera_off', 'connected_video', 'failed'
   const [isCallEstablished, setIsCallEstablished] = useState(false);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
+  const [hasRemoteAudio, setHasRemoteAudio] = useState(false);
+  const [remoteVideoPlaying, setRemoteVideoPlaying] = useState(false);
+  const [remoteCameraAvailable, setRemoteCameraAvailable] = useState(true);
   const [showInCallChat, setShowInCallChat] = useState(false);
   const [inCallInput, setInCallInput] = useState('');
   const [layoutMode, setLayoutMode] = useState('pip'); // 'pip' or 'split'
@@ -124,19 +129,25 @@ export default function VideoMeetingModal({
   // Synchronize Remote WebRTC Stream strictly to remote video & audio elements
   useEffect(() => {
     if (remoteStream) {
-      if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== remoteStream) {
-        remoteVideoRef.current.srcObject = remoteStream;
+      if (remoteVideoRef.current) {
+        if (remoteVideoRef.current.srcObject !== remoteStream) {
+          remoteVideoRef.current.srcObject = remoteStream;
+        }
+        remoteVideoRef.current.muted = true;
         remoteVideoRef.current.play().catch(() => {});
       }
-      if (remoteAudioRef.current && remoteAudioRef.current.srcObject !== remoteStream) {
-        remoteAudioRef.current.srcObject = remoteStream;
+      if (remoteAudioRef.current) {
+        if (remoteAudioRef.current.srcObject !== remoteStream) {
+          remoteAudioRef.current.srcObject = remoteStream;
+        }
+        remoteAudioRef.current.muted = isSpeakerMuted;
         remoteAudioRef.current.play().catch(() => {});
       }
     } else {
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
       if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
     }
-  }, [remoteStream, layoutMode, isSwapped]);
+  }, [remoteStream, layoutMode, isSwapped, hasRemoteVideo, isSpeakerMuted]);
 
   // Handle Incoming DataChannel and Signaling Packets
   const handleDataPacket = (packet) => {
@@ -164,6 +175,8 @@ export default function VideoMeetingModal({
       )));
     } else if (packet.type === 'camera_toggle') {
       setIsRemoteVideoMuted(!!packet.isVideoMuted);
+    } else if (packet.type === 'camera_availability') {
+      setRemoteCameraAvailable(packet.available !== false);
     }
   };
 
@@ -262,9 +275,143 @@ export default function VideoMeetingModal({
       }
     }
 
+    if (stream) {
+      const vTracks = stream.getVideoTracks();
+      const aTracks = stream.getAudioTracks();
+      console.log(`[WebRTC:LocalMedia] Local stream acquired. Video tracks: ${vTracks.length}, Audio tracks: ${aTracks.length}`);
+      if (vTracks.length === 0) {
+        console.warn('[WebRTC:LocalMedia] No video tracks in acquired stream. Local camera not providing frames.');
+        telehealthSignaling.sendData({
+          type: 'camera_availability',
+          available: false,
+          reason: 'hardware_unavailable'
+        });
+      }
+    }
+
     localStreamRef.current = stream;
     setLocalStream(stream);
     return stream;
+  };
+
+  // Dedicated helper to attach incoming MediaStream and wire its tracks
+  const attachRemoteStream = (incomingStream, source = 'stream_event') => {
+    if (!incomingStream) return;
+    
+    const vTracks = incomingStream.getVideoTracks();
+    const aTracks = incomingStream.getAudioTracks();
+    console.log(`[WebRTC:RemoteStream] Received from ${source}. Tracks: Video=${vTracks.length}, Audio=${aTracks.length}`);
+
+    setRemoteStream(incomingStream);
+
+    const hasLiveVideo = vTracks.length > 0 && vTracks.some(t => t.readyState === 'live');
+    const hasLiveAudio = aTracks.length > 0 && aTracks.some(t => t.readyState === 'live');
+    
+    setHasRemoteVideo(hasLiveVideo);
+    setHasRemoteAudio(hasLiveAudio);
+
+    if (hasLiveVideo) {
+      setConnectionDetailedState('connecting_media');
+      setConnectionStatus(isTherapist ? "Connecting to patient's video..." : "Connecting to therapist's video...");
+    } else if (hasLiveAudio) {
+      setConnectionDetailedState('waiting_camera');
+      setConnectionStatus(isTherapist ? "Waiting for patient's camera..." : "Waiting for therapist's camera...");
+    }
+
+    // Attach to video element with muted=true to prevent browser autoplay block
+    if (remoteVideoRef.current) {
+      if (remoteVideoRef.current.srcObject !== incomingStream) {
+        console.log('[WebRTC:DOM] Assigning remoteStream to video element');
+        remoteVideoRef.current.srcObject = incomingStream;
+      }
+      remoteVideoRef.current.muted = true;
+      const playPromise = remoteVideoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            console.log('[WebRTC:DOM] Video play() started successfully');
+          })
+          .catch((err) => {
+            console.warn('[WebRTC:DOM] Video play() note:', err.name, err.message);
+          });
+      }
+    }
+
+    // Attach to audio element for actual sound
+    if (remoteAudioRef.current) {
+      if (remoteAudioRef.current.srcObject !== incomingStream) {
+        console.log('[WebRTC:DOM] Assigning remoteStream to audio element');
+        remoteAudioRef.current.srcObject = incomingStream;
+      }
+      remoteAudioRef.current.muted = isSpeakerMuted;
+      remoteAudioRef.current.play().catch(err => {
+        console.warn('[WebRTC:DOM] Audio play() note:', err.name);
+      });
+    }
+
+    // Listen to new tracks added to the stream
+    incomingStream.onaddtrack = (evt) => {
+      console.log(`[WebRTC:RemoteStream] Track added: ${evt.track.kind}`);
+      attachRemoteStream(incomingStream, 'onaddtrack');
+    };
+
+    // Listen to track unmuting (when RTP packets start flowing)
+    vTracks.forEach((track) => {
+      track.onunmute = () => {
+        console.log('[WebRTC:Track] Remote video track unmuted (media packets flowing)');
+        setHasRemoteVideo(true);
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = incomingStream;
+          remoteVideoRef.current.muted = true;
+          remoteVideoRef.current.play().catch(() => {});
+        }
+      };
+      track.onmute = () => {
+        console.log('[WebRTC:Track] Remote video track muted');
+      };
+      track.onended = () => {
+        console.log('[WebRTC:Track] Remote video track ended');
+        setHasRemoteVideo(false);
+        setRemoteVideoPlaying(false);
+      };
+    });
+  };
+
+  // Bind native RTCPeerConnection events
+  const setupPeerConnectionEvents = (pc) => {
+    if (!pc) return;
+    console.log('[WebRTC:PC] Binding events to RTCPeerConnection');
+
+    pc.ontrack = (event) => {
+      console.log(`[WebRTC:PC] Native ontrack fired: kind=${event.track.kind}, id=${event.track.id}`);
+      const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+      attachRemoteStream(stream, 'native_ontrack');
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      const state = pc.iceConnectionState;
+      console.log(`[WebRTC:PC] ICE Connection State: ${state}`);
+      if (state === 'connected' || state === 'completed') {
+        setIsCallEstablished(true);
+      } else if (state === 'failed') {
+        console.warn('[WebRTC:PC] ICE Connection Failed. Attempting restart...');
+        setConnectionStatus('Network relay reconnecting...');
+        try { pc.restartIce(); } catch (e) {}
+      } else if (state === 'disconnected') {
+        setConnectionStatus('Reconnecting to peer...');
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState;
+      console.log(`[WebRTC:PC] Peer Connection State: ${state}`);
+      if (state === 'connected') {
+        setIsCallEstablished(true);
+      } else if (state === 'failed') {
+        setConnectionDetailedState('failed');
+        setConnectionStatus('Connection failed. Please retry.');
+      }
+    };
   };
 
   // Main Session Lifecycle & Peer Connection Setup
@@ -299,6 +446,9 @@ export default function VideoMeetingModal({
         } else if (event === 'call_ended') {
           setConnectionStatus('Remote participant disconnected');
           setRemoteStream(null);
+          setHasRemoteVideo(false);
+          setHasRemoteAudio(false);
+          setRemoteVideoPlaying(false);
           setIsCallEstablished(false);
         }
       });
@@ -314,22 +464,27 @@ export default function VideoMeetingModal({
         const activeCall = telehealthSignaling.answerCall(stream);
 
         if (activeCall) {
+          setupPeerConnectionEvents(activeCall.peerConnection);
+
           activeCall.on('stream', (rStream) => {
             console.log('[WebRTC] Received remote participant media stream on answer');
-            setRemoteStream(rStream);
-            setIsCallEstablished(true);
-            setConnectionStatus('Connected • Live Consultation Active');
+            attachRemoteStream(rStream, 'peerjs_answer');
             soundFX.playTargetHit();
           });
 
           activeCall.on('close', () => {
+            console.log('[WebRTC] Active call closed');
             setRemoteStream(null);
+            setHasRemoteVideo(false);
+            setHasRemoteAudio(false);
+            setRemoteVideoPlaying(false);
             setIsCallEstablished(false);
             setConnectionStatus('Consultation concluded by peer');
           });
 
           activeCall.on('error', (err) => {
             console.warn('[WebRTC] Call error:', err);
+            setConnectionDetailedState('failed');
             setConnectionStatus('Connection interrupted');
           });
         }
@@ -354,16 +509,20 @@ export default function VideoMeetingModal({
         });
 
         if (mediaCall) {
+          setupPeerConnectionEvents(mediaCall.peerConnection);
+
           mediaCall.on('stream', (rStream) => {
             console.log('[WebRTC] Received remote participant media stream on dial');
-            setRemoteStream(rStream);
-            setIsCallEstablished(true);
-            setConnectionStatus('Connected • Live Consultation Active');
+            attachRemoteStream(rStream, 'peerjs_dial');
             soundFX.playTargetHit();
           });
 
           mediaCall.on('close', () => {
+            console.log('[WebRTC] Dial call closed');
             setRemoteStream(null);
+            setHasRemoteVideo(false);
+            setHasRemoteAudio(false);
+            setRemoteVideoPlaying(false);
             setIsCallEstablished(false);
             setConnectionStatus('Consultation concluded by peer');
           });
@@ -517,14 +676,23 @@ export default function VideoMeetingModal({
                   {remotePeerName}
                 </h3>
                 <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full flex items-center font-bold border ${
-                  isCallEstablished
+                  isCallEstablished && hasRemoteVideo && remoteVideoPlaying
                     ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
                     : 'bg-amber-950/80 text-amber-300 border-amber-800'
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                    isCallEstablished ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
+                    isCallEstablished && hasRemoteVideo && remoteVideoPlaying ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
                   }`} />
-                  {connectionStatus}
+                  {isCallEstablished && hasRemoteVideo && remoteVideoPlaying
+                    ? `${remotePeerName} connected • Live Consultation Active`
+                    : isRemoteVideoMuted
+                    ? (isTherapist ? "Patient camera is turned off" : "Therapist camera is turned off")
+                    : !remoteCameraAvailable || (hasRemoteAudio && !hasRemoteVideo)
+                    ? (isTherapist ? "Waiting for patient's camera..." : "Waiting for therapist's camera...")
+                    : (hasRemoteVideo && !remoteVideoPlaying) || isCallEstablished
+                    ? (isTherapist ? "Connecting to patient's video..." : "Connecting to therapist's video...")
+                    : connectionStatus
+                  }
                 </span>
               </div>
               <div className="text-[11px] text-slate-400 flex items-center space-x-2 mt-0.5 font-medium">
@@ -607,25 +775,33 @@ export default function VideoMeetingModal({
                 ref={remoteVideoRef}
                 autoPlay
                 playsInline
-                className={`w-full h-full object-cover ${!remoteStream || isRemoteVideoMuted ? 'hidden' : 'block'}`}
+                muted
+                onLoadedMetadata={(e) => {
+                  const { videoWidth, videoHeight } = e.target;
+                  console.log(`[WebRTC:Playback] Remote video metadata loaded: ${videoWidth}x${videoHeight}`);
+                  if (videoWidth > 0 && videoHeight > 0) {
+                    setHasRemoteVideo(true);
+                    e.target.play().catch(() => {});
+                  }
+                }}
+                onPlaying={() => {
+                  console.log('[WebRTC:Playback] Remote video playback active');
+                  setRemoteVideoPlaying(true);
+                  setConnectionDetailedState('connected_video');
+                }}
+                onError={(e) => {
+                  console.warn('[WebRTC:Playback] Remote video error:', e);
+                }}
+                className={`w-full h-full object-cover ${(!hasRemoteVideo || !remoteVideoPlaying || isRemoteVideoMuted) ? 'hidden' : 'block'}`}
               />
 
-              {/* Remote Participant Camera Off Card */}
-              {remoteStream && isRemoteVideoMuted && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0b141a] text-center p-6 z-20">
-                  <div className="w-20 h-20 rounded-full bg-slate-900 border-2 border-slate-700 flex items-center justify-center text-slate-300 font-bold text-2xl mb-3">
-                    {remotePeerInitials}
-                  </div>
-                  <h4 className="text-base font-bold text-white">{remotePeerName}</h4>
-                  <span className="text-xs text-slate-400 font-mono mt-1">Camera Switched Off</span>
-                </div>
-              )}
-
-              {/* Waiting / Calling State Card (shown while remote participant has not yet connected) */}
-              {!remoteStream && (
+              {/* Informative Fallback Card (shown whenever remote video is not actively rendering) */}
+              {(!hasRemoteVideo || !remoteVideoPlaying || isRemoteVideoMuted) && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0b141a] text-center p-6 z-20">
                   <div className="relative w-24 h-24 mb-4 flex items-center justify-center">
-                    <div className="absolute inset-0 rounded-full bg-cyan-500/20 animate-ping" />
+                    <div className={`absolute inset-0 rounded-full ${
+                      isRemoteVideoMuted ? 'bg-slate-700/20' : 'bg-cyan-500/20 animate-ping'
+                    }`} />
                     <div className="w-24 h-24 rounded-full bg-[#111b21] border-2 border-cyan-500/50 flex items-center justify-center text-cyan-400 font-bold text-3xl font-mono shadow-2xl">
                       {remotePeerInitials}
                     </div>
@@ -633,12 +809,57 @@ export default function VideoMeetingModal({
                   <h4 className="text-lg font-bold text-white font-display">
                     {remotePeerName}
                   </h4>
-                  <p className="text-xs text-cyan-400 mt-1.5 font-mono flex items-center space-x-1.5">
-                    <span className="w-2 h-2 rounded-full bg-cyan-400 mr-1.5 animate-pulse" />
-                    <span>{connectionStatus}</span>
-                  </p>
+                  <div className="text-xs font-mono mt-2 flex items-center space-x-1.5">
+                    <span className={`w-2 h-2 rounded-full mr-1.5 ${
+                      isRemoteVideoMuted ? 'bg-amber-400' :
+                      hasRemoteVideo && !remoteVideoPlaying ? 'bg-cyan-400 animate-pulse' :
+                      hasRemoteAudio ? 'bg-blue-400 animate-pulse' : 'bg-cyan-400 animate-pulse'
+                    }`} />
+                    <span className={
+                      isRemoteVideoMuted ? 'text-amber-300' :
+                      hasRemoteVideo && !remoteVideoPlaying ? 'text-cyan-300' :
+                      hasRemoteAudio ? 'text-blue-300' : 'text-cyan-400'
+                    }>
+                      {isRemoteVideoMuted
+                        ? (isTherapist ? "Patient camera is turned off." : "Therapist camera is turned off.")
+                        : !remoteCameraAvailable || (hasRemoteAudio && !hasRemoteVideo)
+                        ? (isTherapist ? "Waiting for patient's camera..." : "Waiting for therapist's camera...")
+                        : (hasRemoteVideo && !remoteVideoPlaying) || isCallEstablished
+                        ? (isTherapist ? "Connecting to patient's video..." : "Connecting to therapist's video...")
+                        : connectionStatus
+                      }
+                    </span>
+                  </div>
+
+                  {connectionDetailedState === 'failed' && (
+                    <button
+                      onClick={() => {
+                        setConnectionDetailedState('initiating');
+                        setConnectionStatus('Retrying connection...');
+                        const targetRole = isTherapist ? 'patient' : 'therapist';
+                        const targetId = isTherapist ? (meeting?.patient_id || 'pt_1') : (currentUser?.therapist_id || 'u_therapist_1');
+                        const targetPeerId = telehealthSignaling.getTargetPeerId(targetId, targetRole);
+                        if (localStreamRef.current) {
+                          const mCall = telehealthSignaling.dialCall(targetPeerId, localStreamRef.current);
+                          if (mCall) {
+                            setupPeerConnectionEvents(mCall.peerConnection);
+                            mCall.on('stream', (rStream) => attachRemoteStream(rStream, 'peerjs_retry'));
+                          }
+                        }
+                      }}
+                      className="mt-4 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs font-mono cursor-pointer transition-all shadow-md"
+                    >
+                      Retry Connection
+                    </button>
+                  )}
+
                   <p className="text-[11px] text-slate-400 max-w-sm mt-3 leading-relaxed">
-                    Awaiting remote participant to accept the incoming video consultation on their laptop.
+                    {isRemoteVideoMuted
+                      ? "The remote participant has temporarily switched off their camera."
+                      : hasRemoteAudio && !hasRemoteVideo
+                      ? "Audio connection is established. Awaiting camera video track initialization."
+                      : "Awaiting remote participant to accept the incoming video consultation on their laptop."
+                    }
                   </p>
                   <div className="mt-4 px-3 py-1 rounded-full bg-slate-900 border border-white/10 text-[10px] font-mono text-slate-300">
                     Room: {roomId}
@@ -669,16 +890,18 @@ export default function VideoMeetingModal({
                 autoPlay
                 playsInline
                 muted
-                className={`w-full h-full object-cover -scale-x-100 ${isVideoMuted ? 'hidden' : 'block'}`}
+                className={`w-full h-full object-cover -scale-x-100 ${isVideoMuted || !localStream || localStream.getVideoTracks().length === 0 ? 'hidden' : 'block'}`}
               />
 
-              {/* Local Camera Switched Off Card */}
-              {isVideoMuted && (
+              {/* Local Camera Switched Off / Initializing Card */}
+              {(isVideoMuted || !localStream || localStream.getVideoTracks().length === 0) && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#111b21] text-center p-3 z-20">
                   <div className="w-14 h-14 rounded-full bg-slate-900 border border-slate-700 flex items-center justify-center text-slate-300 font-bold text-lg mb-2">
                     {myInitials}
                   </div>
-                  <span className="text-[10px] text-slate-300 font-mono">Your Camera is Off</span>
+                  <span className="text-[10px] text-slate-300 font-mono">
+                    {isVideoMuted ? 'Your Camera is Off' : 'Camera Initializing...'}
+                  </span>
                 </div>
               )}
 

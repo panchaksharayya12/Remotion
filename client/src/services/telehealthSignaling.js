@@ -12,7 +12,24 @@ const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:global.stun.twilio.com:3478' }
+  { urls: 'stun:global.stun.twilio.com:3478' },
+  {
+    urls: [
+      'turn:eu-0.turn.peerjs.com:3478',
+      'turn:us-0.turn.peerjs.com:3478'
+    ],
+    username: 'peerjs',
+    credential: 'peerjsp'
+  },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp'
+    ],
+    username: 'openrelay',
+    credential: 'openrelay'
+  }
 ];
 
 class TelehealthSignalingService {
@@ -172,7 +189,9 @@ class TelehealthSignalingService {
     }
 
     this.localStream = stream;
-    console.log('[Telehealth] Calling remote peer:', targetPeerId);
+    const vTracks = stream?.getVideoTracks() || [];
+    const aTracks = stream?.getAudioTracks() || [];
+    console.log(`[Telehealth:Call] Dialing peer: ${targetPeerId}. Video tracks: ${vTracks.length}, Audio tracks: ${aTracks.length}`);
 
     // 1. Establish WebRTC Media Call
     const mediaCall = this.peer.call(targetPeerId, stream, {
@@ -180,6 +199,8 @@ class TelehealthSignalingService {
         callerName: this.currentUser?.name,
         callerRole: this.currentUser?.role,
         callerId: this.currentUser?.id,
+        hasVideo: vTracks.length > 0,
+        hasAudio: aTracks.length > 0,
         timestamp: Date.now(),
         ...metadata
       }
@@ -207,7 +228,9 @@ class TelehealthSignalingService {
   answerCall(stream) {
     if (!this.currentCall) return null;
     this.localStream = stream;
-    console.log('[Telehealth] Answering incoming call with local media stream');
+    const vTracks = stream?.getVideoTracks() || [];
+    const aTracks = stream?.getAudioTracks() || [];
+    console.log(`[Telehealth:Call] Answering incoming call. Video tracks: ${vTracks.length}, Audio tracks: ${aTracks.length}`);
     this.currentCall.answer(stream);
     return this.currentCall;
   }
