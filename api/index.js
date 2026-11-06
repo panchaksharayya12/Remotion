@@ -342,6 +342,7 @@ let CLINICAL_MEETINGS = [
 
 let WEBRTC_SIGNALS = [];
 let ACTIVE_CALL_ALERTS = [];
+let ACTIVE_TELEHEALTH_PEERS = {};
 
 export default async function handler(req, res) {
   // Enable CORS
@@ -730,6 +731,15 @@ export default async function handler(req, res) {
       if (WEBRTC_SIGNALS.length > 500) WEBRTC_SIGNALS.shift();
       return res.status(200).json({ success: true, signal: signalEntry });
     }
+    if (req.method === 'DELETE') {
+      const targetRoomId = url.searchParams.get('roomId') || body.roomId;
+      if (targetRoomId) {
+        WEBRTC_SIGNALS = WEBRTC_SIGNALS.filter(s => s.roomId !== targetRoomId);
+      } else {
+        WEBRTC_SIGNALS = [];
+      }
+      return res.status(200).json({ success: true });
+    }
     // GET: Query signals for this room
     const targetRoomId = url.searchParams.get('roomId') || 'remotion-room-pt_1';
     const excludeSender = url.searchParams.get('excludeSender') || '';
@@ -739,6 +749,30 @@ export default async function handler(req, res) {
       s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp >= windowStart
     );
     return res.status(200).json({ success: true, signals: matched.slice(-30) });
+  }
+
+  // Active Peer Presence Registry (Ensures exact peer addressing across refreshes)
+  if (pathname === '/telehealth/peers' || pathname.startsWith('/telehealth/peers')) {
+    if (req.method === 'POST') {
+      const { role, userId, peerId, roomId } = body;
+      const key = `${role}_${userId || 'pt_1'}`;
+      ACTIVE_TELEHEALTH_PEERS[key] = {
+        role,
+        userId: userId || 'pt_1',
+        peerId,
+        roomId: roomId || 'remotion-room-pt_1',
+        updatedAt: Date.now()
+      };
+      return res.status(200).json({ success: true, peer: ACTIVE_TELEHEALTH_PEERS[key] });
+    }
+    const role = url.searchParams.get('role');
+    const userId = url.searchParams.get('userId');
+    if (role && userId) {
+      const key = `${role}_${userId}`;
+      const found = ACTIVE_TELEHEALTH_PEERS[key];
+      return res.status(200).json({ success: true, peer: found || null });
+    }
+    return res.status(200).json({ success: true, peers: ACTIVE_TELEHEALTH_PEERS });
   }
 
   // Real-Time Telehealth Call Alerts (rings on recipient portal immediately)

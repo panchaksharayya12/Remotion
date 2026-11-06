@@ -971,6 +971,35 @@ class ApiService {
     }
   }
 
+  async clearWebRTCSignals(roomId = '') {
+    try {
+      return await this.request(`/webrtc/signal${roomId ? `?roomId=${encodeURIComponent(roomId)}` : ''}`, {
+        method: 'DELETE'
+      });
+    } catch (e) {
+      return { success: false };
+    }
+  }
+
+  async registerTelehealthPeer(peerData) {
+    try {
+      return await this.request('/telehealth/peers', {
+        method: 'POST',
+        body: JSON.stringify(peerData)
+      });
+    } catch (e) {
+      return { success: false };
+    }
+  }
+
+  async getTelehealthPeer(role, userId) {
+    try {
+      return await this.request(`/telehealth/peers?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId)}`);
+    } catch (e) {
+      return { success: false, peer: null };
+    }
+  }
+
   async sendCallAlert(alertData) {
     try {
       return await this.request('/telehealth/call-alert', {
