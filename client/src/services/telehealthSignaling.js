@@ -133,6 +133,15 @@ class TelehealthSignalingService {
         debug: 1
       });
 
+      if (typeof window !== 'undefined' && !this._beforeUnloadAttached) {
+        this._beforeUnloadAttached = true;
+        window.addEventListener('beforeunload', () => {
+          if (this.peer && !this.peer.destroyed) {
+            try { this.peer.destroy(); } catch (e) {}
+          }
+        });
+      }
+
       this.peer.on('open', (id) => {
         console.log('[Telehealth:Signaling] WebSocket Signaling Connected. Registered Peer ID:', id);
         this.peerId = id;

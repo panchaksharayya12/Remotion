@@ -77,6 +77,7 @@ export default function VideoMeetingModal({
   const localStreamRef = useRef(null);
   const recognitionRef = useRef(null);
   const isComponentMountedRef = useRef(true);
+  const initializeCallSessionRef = useRef(null);
 
   const remotePeerInitials = remotePeerName
     .split(' ')
@@ -325,6 +326,7 @@ export default function VideoMeetingModal({
     let unsubSignaling = null;
 
     const initializeCallSession = async () => {
+      initializeCallSessionRef.current = initializeCallSession;
       setCallState('acquiring_media');
       setConnectionStatusText('Acquiring hardware camera and audio...');
       const stream = await acquireHardwareMedia();
@@ -366,31 +368,83 @@ export default function VideoMeetingModal({
         targetUserId: targetId,
         callerName: myName,
         callerRole: myRole,
+        callerPeerId: telehealthSignaling.peerId,
         meetingTitle: meeting?.title || 'Clinical Video Review & Telehealth',
         roomId
       }).catch(() => {});
 
-      // Launch Unified Native WebRTC Session with Perfect Negotiation
-      telehealthSignaling.setupNativeWebRTCSession({
-        roomId,
-        isCaller,
-        localStream: stream,
-        onRemoteTrack: (rStream) => {
-          attachRemoteStream(rStream, 'native_ontrack');
-          soundFX.playTargetHit();
-        },
-        onStateChange: (iceConnState, peerConnState) => {
-          setIceState(iceConnState);
-          if (iceConnState === 'connected' || iceConnState === 'completed') {
-            setSignalingConnected(true);
-            setCallState('connected');
-            setConnectionStatusText('Video Consultation Active');
-          } else if (iceConnState === 'failed') {
-            setCallState('reconnecting');
-            setConnectionStatusText('Network relay reconnecting...');
+      if (isCaller) {
+        // CALLER (Therapist): Dials Callee (Patient) with deterministic single-peer directionality
+        let hasConnected = false;
+        const dialTarget = async () => {
+          if (!isComponentMountedRef.current || hasConnected) return;
+          let targetPeerId = telehealthSignaling.getTargetPeerId(targetId, targetRole);
+          try {
+            const peerRes = await api.getTelehealthPeer(targetRole, targetId);
+            if (peerRes?.peer?.peerId) {
+              targetPeerId = peerRes.peer.peerId;
+            }
+          } catch (e) {}
+
+          console.log('[WebRTC:Consultation] Therapist dialing patient peer ID:', targetPeerId);
+          const mediaCall = telehealthSignaling.dialCall(targetPeerId, stream, {
+            meetingTitle: meeting?.title,
+            roomId,
+            patientId: targetPatientId
+          });
+
+          if (mediaCall) {
+            mediaCall.on('stream', (rStream) => {
+              console.log('[WebRTC:Consultation] Remote patient stream received by therapist');
+              hasConnected = true;
+              setSignalingConnected(true);
+              attachRemoteStream(rStream, 'peerjs_caller_stream');
+              soundFX.playTargetHit();
+            });
+            mediaCall.on('close', () => {
+              console.log('[WebRTC:Consultation] Remote participant closed consultation');
+              setCallState('ended');
+            });
+            mediaCall.on('error', (err) => {
+              console.warn('[WebRTC:Consultation] Call notice:', err);
+            });
           }
+        };
+
+        dialTarget();
+        const retryTimer = setTimeout(() => {
+          if (isComponentMountedRef.current && !hasConnected) {
+            console.log('[WebRTC:Consultation] Auto-retrying dial to establish media stream...');
+            dialTarget();
+          }
+        }, 3500);
+
+      } else {
+        // CALLEE (Patient): Strictly answers incoming call (eliminates glare / dual-dial conflict)
+        console.log('[WebRTC:Consultation] Patient awaiting therapist incoming call...');
+        setCallState('signaling');
+        setConnectionStatusText('Connecting video stream from therapist...');
+
+        const handleIncomingCall = (incomingCall) => {
+          console.log('[WebRTC:Consultation] Patient answering incoming media call from:', incomingCall.peer);
+          setSignalingConnected(true);
+          incomingCall.answer(stream);
+          incomingCall.on('stream', (rStream) => {
+            console.log('[WebRTC:Consultation] Remote therapist stream received by patient');
+            attachRemoteStream(rStream, 'peerjs_callee_stream');
+            soundFX.playTargetHit();
+          });
+          incomingCall.on('close', () => {
+            setCallState('ended');
+          });
+        };
+
+        if (telehealthSignaling.currentCall) {
+          handleIncomingCall(telehealthSignaling.currentCall);
+        } else {
+          telehealthSignaling.setIncomingCallHandler(handleIncomingCall);
         }
-      });
+      }
     };
 
     if (isOpen) {
@@ -759,19 +813,9 @@ export default function VideoMeetingModal({
                   {callState === 'failed' && (
                     <button
                       onClick={() => {
-                        setCallState('acquiring_media');
-                        setConnectionStatusText('Retrying connection...');
-                        acquireHardwareMedia().then(stream => {
-                          if (stream) {
-                            telehealthSignaling.setupNativeWebRTCSession({
-                              roomId,
-                              isCaller,
-                              localStream: stream,
-                              onRemoteTrack: (rStream) => attachRemoteStream(rStream, 'native_retry'),
-                              onStateChange: (iceConnState) => setIceState(iceConnState)
-                            });
-                          }
-                        });
+                        if (initializeCallSessionRef.current) {
+                          initializeCallSessionRef.current();
+                        }
                       }}
                       className="mt-4 px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs font-mono cursor-pointer transition-all shadow-md"
                     >
