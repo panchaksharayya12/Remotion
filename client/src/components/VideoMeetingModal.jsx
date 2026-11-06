@@ -260,8 +260,9 @@ export default function VideoMeetingModal({
     setHasRemoteAudio(hasLiveAudio);
 
     if (hasLiveVideo) {
-      setCallState('waiting_for_remote_media');
-      setConnectionStatusText(isTherapist ? "Connecting to patient's video..." : "Connecting to therapist's video...");
+      setCallState('connected');
+      setRemoteVideoPlaying(true);
+      setConnectionStatusText('Video Consultation Active');
     } else if (hasLiveAudio) {
       setCallState('waiting_for_remote_media');
       setConnectionStatusText(isTherapist ? "Waiting for patient's camera..." : "Waiting for therapist's camera...");
@@ -273,7 +274,15 @@ export default function VideoMeetingModal({
         remoteVideoRef.current.srcObject = incomingStream;
       }
       remoteVideoRef.current.muted = true;
-      remoteVideoRef.current.play().catch(() => {});
+      const playPromise = remoteVideoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          setRemoteVideoPlaying(true);
+          setCallState('connected');
+        }).catch((err) => {
+          console.log('[WebRTC:Playback] Play promise pending:', err);
+        });
+      }
     }
 
     // Attach to remote audio element for actual sound
@@ -361,50 +370,27 @@ export default function VideoMeetingModal({
         roomId
       }).catch(() => {});
 
-      // 1. Launch Native WebRTC Session with Perfect Negotiation
+      // Launch Unified Native WebRTC Session with Perfect Negotiation
       telehealthSignaling.setupNativeWebRTCSession({
         roomId,
         isCaller,
         localStream: stream,
         onRemoteTrack: (rStream) => {
           attachRemoteStream(rStream, 'native_ontrack');
+          soundFX.playTargetHit();
         },
         onStateChange: (iceConnState, peerConnState) => {
           setIceState(iceConnState);
           if (iceConnState === 'connected' || iceConnState === 'completed') {
             setSignalingConnected(true);
-            setCallState('waiting_for_remote_media');
-            setConnectionStatusText(isTherapist ? "Connecting to patient's video..." : "Connecting to therapist's video...");
+            setCallState('connected');
+            setConnectionStatusText('Video Consultation Active');
           } else if (iceConnState === 'failed') {
             setCallState('reconnecting');
             setConnectionStatusText('Network relay reconnecting...');
           }
         }
       });
-
-      // 2. Parallel Fast-Track: PeerJS WebSocket
-      const targetPeerId = telehealthSignaling.getTargetPeerId(targetId, targetRole);
-      if (telehealthSignaling.currentCall) {
-        const activeCall = telehealthSignaling.answerCall(stream);
-        if (activeCall) {
-          activeCall.on('stream', (rStream) => {
-            attachRemoteStream(rStream, 'peerjs_answer');
-            soundFX.playTargetHit();
-          });
-        }
-      } else {
-        const mediaCall = telehealthSignaling.dialCall(targetPeerId, stream, {
-          meetingTitle: meeting?.title,
-          roomId,
-          patientId: targetPatientId
-        });
-        if (mediaCall) {
-          mediaCall.on('stream', (rStream) => {
-            attachRemoteStream(rStream, 'peerjs_dial');
-            soundFX.playTargetHit();
-          });
-        }
-      }
     };
 
     if (isOpen) {
@@ -605,16 +591,14 @@ export default function VideoMeetingModal({
                     : 'bg-amber-950/80 text-amber-300 border-amber-800'
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
-                    callState === 'connected' && hasRemoteVideo && remoteVideoPlaying ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
+                    callState === 'connected' || hasRemoteVideo ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
                   }`} />
-                  {callState === 'connected' && hasRemoteVideo && remoteVideoPlaying
-                    ? `${remotePeerName} connected • Live Consultation Active`
+                  {callState === 'connected' || hasRemoteVideo
+                    ? `${remotePeerName} connected - Video Consultation Active`
                     : isRemoteVideoMuted
                     ? (isTherapist ? "Patient camera is turned off" : "Therapist camera is turned off")
                     : !remoteCameraAvailable || (hasRemoteAudio && !hasRemoteVideo)
                     ? (isTherapist ? "Waiting for patient's camera..." : "Waiting for therapist's camera...")
-                    : (hasRemoteVideo && !remoteVideoPlaying)
-                    ? (isTherapist ? "Connecting to patient's video..." : "Connecting to therapist's video...")
                     : connectionStatusText
                   }
                 </span>
@@ -720,7 +704,16 @@ export default function VideoMeetingModal({
                   console.log(`[WebRTC:Playback] Remote video metadata loaded: ${videoWidth}x${videoHeight}`);
                   if (videoWidth > 0 && videoHeight > 0) {
                     setHasRemoteVideo(true);
+                    setRemoteVideoPlaying(true);
+                    setCallState('connected');
                     e.target.play().catch(() => {});
+                  }
+                }}
+                onTimeUpdate={(e) => {
+                  if (e.target.currentTime > 0 && !remoteVideoPlaying) {
+                    console.log('[WebRTC:Playback] Video time advancing, frames actively rendering');
+                    setRemoteVideoPlaying(true);
+                    setCallState('connected');
                   }
                 }}
                 onPlaying={() => {
@@ -728,11 +721,11 @@ export default function VideoMeetingModal({
                   setRemoteVideoPlaying(true);
                   setCallState('connected');
                 }}
-                className={`w-full h-full object-cover ${(!hasRemoteVideo || !remoteVideoPlaying || isRemoteVideoMuted) ? 'hidden' : 'block'}`}
+                className="w-full h-full object-cover"
               />
 
-              {/* Informative Fallback Card (shown whenever remote video is not actively rendering) */}
-              {(!hasRemoteVideo || !remoteVideoPlaying || isRemoteVideoMuted) && (
+              {/* Informative Fallback Card (shown whenever remote video is not yet received or remote participant muted video) */}
+              {(!hasRemoteVideo || isRemoteVideoMuted) && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0b141a] text-center p-6 z-20">
                   <div className="relative w-24 h-24 mb-4 flex items-center justify-center">
                     <div className={`absolute inset-0 rounded-full ${
@@ -748,20 +741,16 @@ export default function VideoMeetingModal({
                   <div className="text-xs font-mono mt-2 flex items-center space-x-1.5">
                     <span className={`w-2 h-2 rounded-full mr-1.5 ${
                       isRemoteVideoMuted ? 'bg-amber-400' :
-                      hasRemoteVideo && !remoteVideoPlaying ? 'bg-cyan-400 animate-pulse' :
                       hasRemoteAudio ? 'bg-blue-400 animate-pulse' : 'bg-cyan-400 animate-pulse'
                     }`} />
                     <span className={
                       isRemoteVideoMuted ? 'text-amber-300' :
-                      hasRemoteVideo && !remoteVideoPlaying ? 'text-cyan-300' :
                       hasRemoteAudio ? 'text-blue-300' : 'text-cyan-400'
                     }>
                       {isRemoteVideoMuted
                         ? (isTherapist ? "Patient camera is turned off." : "Therapist camera is turned off.")
                         : !remoteCameraAvailable || (hasRemoteAudio && !hasRemoteVideo)
                         ? (isTherapist ? "Waiting for patient's camera..." : "Waiting for therapist's camera...")
-                        : (hasRemoteVideo && !remoteVideoPlaying)
-                        ? (isTherapist ? "Connecting to patient's video..." : "Connecting to therapist's video...")
                         : connectionStatusText
                       }
                     </span>

@@ -744,11 +744,11 @@ export default async function handler(req, res) {
     const targetRoomId = url.searchParams.get('roomId') || 'remotion-room-pt_1';
     const excludeSender = url.searchParams.get('excludeSender') || '';
     const since = parseInt(url.searchParams.get('since') || '0', 10);
-    const windowStart = since > 0 ? Math.max(since, Date.now() - 30000) : (Date.now() - 30000);
+    const windowStart = since > 0 ? since : (Date.now() - 120000);
     const matched = WEBRTC_SIGNALS.filter(
       s => s.roomId === targetRoomId && s.senderId !== excludeSender && s.timestamp >= windowStart
     );
-    return res.status(200).json({ success: true, signals: matched.slice(-30) });
+    return res.status(200).json({ success: true, signals: matched.slice(-100) });
   }
 
   // Active Peer Presence Registry (Ensures exact peer addressing across refreshes)

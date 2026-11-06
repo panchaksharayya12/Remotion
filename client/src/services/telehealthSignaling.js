@@ -285,8 +285,10 @@ class TelehealthSignalingService {
   setupNativeWebRTCSession({ roomId, isCaller, localStream, onRemoteTrack, onStateChange }) {
     this.activeRoomId = roomId;
     this.remoteCandidateQueue = [];
-    this.lastProcessedSignalTime = Date.now() - 5000;
+    this.lastProcessedSignalTime = 0;
     this.processedSignalIds.clear();
+    this.makingOffer = false;
+    this.ignoreOffer = false;
 
     const isPolite = !isCaller; // Patient is polite, Therapist is impolite for deterministic glare resolution
     console.log(`[WebRTC:Native] Initializing Native RTCPeerConnection. Room: ${roomId}, isCaller: ${isCaller}, isPolite: ${isPolite}`);
@@ -341,9 +343,18 @@ class TelehealthSignalingService {
     // Perfect Negotiation pattern onnegotiationneeded
     pc.onnegotiationneeded = async () => {
       try {
+        if (!isCaller && !pc.remoteDescription) {
+          console.log('[WebRTC:Native] Callee waiting for caller initial offer, suppressing local offer');
+          return;
+        }
+        if (pc.signalingState !== 'stable') {
+          console.log('[WebRTC:Native] Signaling state not stable (' + pc.signalingState + '), deferring negotiation');
+          return;
+        }
         console.log('[WebRTC:Native] onnegotiationneeded triggered');
         this.makingOffer = true;
-        await pc.setLocalDescription();
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
         console.log('[WebRTC:Native] Generated local SDP Offer:', pc.localDescription.type);
 
         await api.sendWebRTCSignal({
@@ -352,7 +363,7 @@ class TelehealthSignalingService {
           userName: this.currentUser?.name || '',
           role: this.currentUser?.role || '',
           type: 'offer',
-          sdp: pc.localDescription
+          sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }
         });
       } catch (err) {
         console.warn('[WebRTC:Native] Negotiation error:', err);
@@ -360,6 +371,34 @@ class TelehealthSignalingService {
         this.makingOffer = false;
       }
     };
+
+    // Caller explicit initial offer creation
+    if (isCaller) {
+      setTimeout(async () => {
+        if (!this.nativePC || this.nativePC !== pc) return;
+        if (pc.signalingState === 'stable' && !pc.remoteDescription && !pc.localDescription) {
+          try {
+            console.log('[WebRTC:Native] Caller generating initial SDP Offer...');
+            this.makingOffer = true;
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            console.log('[WebRTC:Native] Initial local SDP Offer set:', pc.localDescription.type);
+            await api.sendWebRTCSignal({
+              roomId,
+              senderId: this.currentUser?.id || 'user',
+              userName: this.currentUser?.name || '',
+              role: this.currentUser?.role || '',
+              type: 'offer',
+              sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }
+            });
+          } catch (e) {
+            console.warn('[WebRTC:Native] Caller initial offer notice:', e);
+          } finally {
+            this.makingOffer = false;
+          }
+        }
+      }, 300);
+    }
 
     // Gather local ICE candidates and post to REST bridge
     pc.onicecandidate = ({ candidate }) => {
@@ -377,8 +416,17 @@ class TelehealthSignalingService {
 
     // Remote Track delivery
     pc.ontrack = (event) => {
-      console.log(`[WebRTC:Native] ontrack fired! kind: ${event.track.kind}, trackId: ${event.track.id}`);
-      const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
+      console.log(`[WebRTC:Native] ontrack fired! kind: ${event.track.kind}, trackId: ${event.track.id}, streams=${event.streams?.length}`);
+      let stream = (event.streams && event.streams[0]) ? event.streams[0] : null;
+      if (!stream) {
+        if (!this.remoteStream) {
+          this.remoteStream = new MediaStream();
+        }
+        this.remoteStream.addTrack(event.track);
+        stream = this.remoteStream;
+      } else {
+        this.remoteStream = stream;
+      }
       if (onRemoteTrack) onRemoteTrack(stream, event.track);
     };
 
@@ -393,12 +441,28 @@ class TelehealthSignalingService {
       if (onStateChange) onStateChange(pc.iceConnectionState, pc.connectionState);
     };
 
-    // Start Signaling Polling Loop on /api/webrtc/signal
+    // Start Signaling Polling Loop on /api/webrtc/signal (250ms for low latency)
     if (this.pollInterval) clearInterval(this.pollInterval);
     const mySenderId = this.currentUser?.id || 'user';
+    let pollCount = 0;
 
     this.pollInterval = setInterval(async () => {
       if (!this.nativePC || this.nativePC.signalingState === 'closed') return;
+      pollCount++;
+
+      // Caller keep-alive / offer rebroadcast if no answer received after 3 seconds
+      if (isCaller && pc.signalingState === 'have-local-offer' && (pollCount % 12 === 0)) {
+        if (pc.localDescription) {
+          api.sendWebRTCSignal({
+            roomId,
+            senderId: mySenderId,
+            userName: this.currentUser?.name || '',
+            role: this.currentUser?.role || '',
+            type: 'offer',
+            sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }
+          }).catch(() => {});
+        }
+      }
 
       try {
         const res = await api.getWebRTCSignals(roomId, mySenderId, this.lastProcessedSignalTime);
@@ -409,7 +473,7 @@ class TelehealthSignalingService {
           this.processedSignalIds.add(sig.id);
           this.lastProcessedSignalTime = Math.max(this.lastProcessedSignalTime, sig.timestamp);
 
-          if (sig.type === 'offer') {
+          if (sig.type === 'offer' && sig.sdp) {
             console.log('[WebRTC:Native] Processing remote SDP Offer');
             const offerCollision = this.makingOffer || pc.signalingState !== 'stable';
             this.ignoreOffer = !isPolite && offerCollision;
@@ -418,14 +482,24 @@ class TelehealthSignalingService {
               continue;
             }
 
-            await pc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
+            if (offerCollision) {
+              console.log('[WebRTC:Native] Glare collision: Polite peer performing rollback');
+              await Promise.all([
+                pc.setLocalDescription({ type: 'rollback' }),
+                pc.setRemoteDescription(new RTCSessionDescription(sig.sdp))
+              ]);
+            } else {
+              await pc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
+            }
+
             // Drain any queued ICE candidates
             while (this.remoteCandidateQueue.length > 0) {
               const c = this.remoteCandidateQueue.shift();
               try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) {}
             }
 
-            await pc.setLocalDescription();
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
             console.log('[WebRTC:Native] Created and set local SDP Answer:', pc.localDescription.type);
 
             await api.sendWebRTCSignal({
@@ -434,18 +508,18 @@ class TelehealthSignalingService {
               userName: this.currentUser?.name || '',
               role: this.currentUser?.role || '',
               type: 'answer',
-              sdp: pc.localDescription
+              sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }
             });
-          } else if (sig.type === 'answer') {
-            console.log('[WebRTC:Native] Processing remote SDP Answer');
+          } else if (sig.type === 'answer' && sig.sdp) {
+            console.log('[WebRTC:Native] Processing remote SDP Answer in state:', pc.signalingState);
             if (pc.signalingState === 'have-local-offer') {
               await pc.setRemoteDescription(new RTCSessionDescription(sig.sdp));
+              console.log('[WebRTC:Native] Remote Description set successfully from Answer. State now:', pc.signalingState);
               // Drain any queued ICE candidates
               while (this.remoteCandidateQueue.length > 0) {
                 const c = this.remoteCandidateQueue.shift();
                 try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (e) {}
               }
-              console.log('[WebRTC:Native] Remote Description set successfully from Answer');
             }
           } else if (sig.type === 'candidate' && sig.candidate) {
             if (pc.remoteDescription && pc.remoteDescription.type) {
@@ -461,7 +535,7 @@ class TelehealthSignalingService {
           }
         }
       } catch (pollErr) {}
-    }, 500);
+    }, 250);
 
     return pc;
   }
