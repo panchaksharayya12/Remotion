@@ -1036,6 +1036,10 @@ export default function AdminPortal({ onPreviewPortal }) {
           </div>
         </div>
       )}
+      {/* Bottom Disclaimer */}
+      <footer className="mt-8 py-4 border-t border-slate-800/60 text-center text-[11px] text-slate-500 font-mono">
+        Prototype - synthetic demo data - not a medical device. Built for academic research and motor rehabilitation support.
+      </footer>
     </div>
   );
 }

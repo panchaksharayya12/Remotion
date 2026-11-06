@@ -13,6 +13,7 @@ import RemoAssistant from '../components/RemoAssistant';
 import ClinicalRecoveryBarChart from '../components/ClinicalRecoveryBarChart';
 import PlayableGameModal from './PlayableGameModal';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { telehealthSignaling } from '../services/telehealthSignaling';
 
 const DEFAULT_PATIENTS = [
   {
@@ -453,26 +454,15 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       }));
     } catch (e) {}
 
-    // 4. Fast cross-browser cloud SSE dispatch via ntfy.sh (<50ms between Edge, Chrome, Safari)
-    try {
-      const callPayload = JSON.stringify({
-        type: 'IMMEDIATE_START_CALL',
-        callerRole: 'therapist',
-        callerName: 'Dr. Rajesh Kulkarni, PT',
-        targetPatientId: currentPt?.id || 'pt_1',
-        meeting,
-        timestamp: Date.now()
-      });
-      fetch(`https://ntfy.sh/remotion_telehealth_alert_patient_${currentPt?.id || 'pt_1'}`, { method: 'POST', body: callPayload }).catch(() => {});
-      fetch('https://ntfy.sh/remotion_telehealth_alert_patient_all', { method: 'POST', body: callPayload }).catch(() => {});
-      fetch('https://ntfy.sh/remotion_telehealth_alert_patient_pt_1', { method: 'POST', body: callPayload }).catch(() => {});
-    } catch (e) {}
-
-    // 5. Serverless API call alert bridge
+    // 4. Serverless API call alert bridge (cross-laptop call notification)
     api.sendCallAlert({
       targetRole: 'patient',
+      targetUserId: currentPt?.id || 'pt_1',
       callerRole: 'therapist',
       callerName: 'Dr. Rajesh Kulkarni, PT',
+      patientId: currentPt?.id || 'pt_1',
+      meetingTitle: meeting.title,
+      roomId: meeting.room_id,
       meeting
     }).catch(() => {});
 
@@ -645,68 +635,36 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
       } catch (e) {}
     }, 400);
 
-    // 3. Fast cross-browser SSE listener for Call Alerts
-    let sseSource = null;
+    // 3. WebRTC Cross-Laptop Telehealth Signaling & Call Receiver
     try {
-      sseSource = new EventSource('https://ntfy.sh/remotion_telehealth_alert_therapist_all/sse');
-      sseSource.onmessage = (event) => {
-        try {
-          const raw = JSON.parse(event.data);
-          if (raw.event === 'message' && raw.message) {
-            const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
-            if (data.type === 'IMMEDIATE_START_CALL' && data.callerRole !== 'therapist') {
-              playRingChime();
-              setIncomingCall({
-                callerName: data.callerName || (data.callerPatientId ? (patients.find(p => p.id === data.callerPatientId)?.name || 'Registered Patient') : 'Patient Consultation'),
-                meetingTitle: data.meeting?.title || 'Clinical Video Meeting & Telehealth',
-                roomId: data.meeting?.room_id || `remotion-room-${data.callerPatientId || 'pt_1'}`,
-                meeting: data.meeting
-              });
-            }
+      telehealthSignaling.initialize(currentUser || {
+        role: 'therapist',
+        id: 'u_therapist_1'
+      });
+
+      telehealthSignaling.setIncomingCallHandler((mediaCall) => {
+        playRingChime();
+        const ptName = mediaCall.metadata?.callerName || 'Patient Consultation';
+        const ptId = mediaCall.metadata?.patientId || 'pt_1';
+        setIncomingCall({
+          callerName: ptName,
+          callerPatientId: ptId,
+          meetingTitle: mediaCall.metadata?.meetingTitle || 'Clinical Telehealth Video Consultation',
+          roomId: mediaCall.metadata?.roomId || `remotion-room-${ptId}`,
+          meeting: {
+            id: 'mt_' + Date.now().toString(36),
+            room_id: mediaCall.metadata?.roomId || `remotion-room-${ptId}`,
+            title: mediaCall.metadata?.meetingTitle || 'Clinical Telehealth Video Consultation',
+            patient_name: ptName,
+            patient_id: ptId,
+            therapist_name: 'Dr. Rajesh Kulkarni, PT',
+            scheduled_time: 'Now (Live Telehealth)'
           }
-        } catch (err) {}
-      };
+        });
+      });
     } catch (e) {}
 
-    // 4. Fast cross-browser SSE listener for Real-Time Clinician Chat
-    let chatSseSource = null;
-    try {
-      chatSseSource = new EventSource('https://ntfy.sh/remotion_clinician_chat_sync/sse');
-      chatSseSource.onmessage = (event) => {
-        try {
-          const raw = JSON.parse(event.data);
-          if (raw.event === 'message' && raw.message) {
-            const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
-            if (data.type === 'CHAT_MESSAGE' && data.message) {
-              setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
-            }
-          }
-        } catch (e) {}
-      };
-    } catch (e) {}
-
-    // Active ntfy.sh Chat JSON Polling (every 1000ms)
-    const ntfyChatPoll = setInterval(async () => {
-      try {
-        const res = await fetch('https://ntfy.sh/remotion_clinician_chat_sync/json?since=15s');
-        const text = await res.text();
-        const lines = text.trim().split('\n');
-        for (const line of lines) {
-          if (!line) continue;
-          try {
-            const raw = JSON.parse(line);
-            if (raw.event === 'message' && raw.message) {
-              const data = typeof raw.message === 'string' ? JSON.parse(raw.message) : raw.message;
-              if (data.type === 'CHAT_MESSAGE' && data.message) {
-                setChatMessages(prev => mergeAndDeduplicateMessages(prev, data.message));
-              }
-            }
-          } catch (e) {}
-        }
-      } catch (e) {}
-    }, 1000);
-
-    // 5. Polling Serverless call alert API
+    // 4. Polling Serverless call alert API (cross-laptop fallback)
     let alertPollInterval = setInterval(async () => {
       try {
         const res = await api.getCallAlerts('therapist', 'therapist');
@@ -714,19 +672,29 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           const latest = res.alerts[res.alerts.length - 1];
           if (latest.callerRole !== 'therapist') {
             setIncomingCall(prev => {
-              if (prev && prev.roomId === latest.meeting?.room_id) return prev;
+              if (prev && prev.alertId === latest.id) return prev;
               playRingChime();
               return {
+                alertId: latest.id,
                 callerName: latest.callerName || 'Asha Sharma (Patient)',
-                meetingTitle: latest.meeting?.title || 'Clinical Video Meeting & Telehealth',
-                roomId: latest.meeting?.room_id || 'remotion-room-pt_1',
-                meeting: latest.meeting
+                callerPatientId: latest.patientId || 'pt_1',
+                meetingTitle: latest.meetingTitle || 'Clinical Video Meeting & Telehealth',
+                roomId: latest.roomId || `remotion-room-${latest.patientId || 'pt_1'}`,
+                meeting: latest.meeting || {
+                  id: 'mt_' + Date.now().toString(36),
+                  title: latest.meetingTitle || 'Clinical Telehealth Video Consultation',
+                  room_id: latest.roomId || `remotion-room-${latest.patientId || 'pt_1'}`,
+                  patient_name: latest.callerName || 'Asha Sharma',
+                  patient_id: latest.patientId || 'pt_1',
+                  therapist_name: 'Dr. Rajesh Kulkarni, PT',
+                  scheduled_time: 'Now (Live Telehealth)'
+                }
               };
             });
           }
         }
       } catch (err) {}
-    }, 800);
+    }, 1200);
 
     // 6. Continuous fast API Chat Message polling (every 800ms)
     const apiChatPoll = setInterval(async () => {
@@ -767,12 +735,9 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
     return () => {
       clearInterval(localChatPoll);
       clearInterval(localSignalPoll);
-      clearInterval(ntfyChatPoll);
       clearInterval(alertPollInterval);
       clearInterval(apiChatPoll);
       window.removeEventListener('storage', handleStorageEvent);
-      if (sseSource) { try { sseSource.close(); } catch (e) {} }
-      if (chatSseSource) { try { chatSseSource.close(); } catch (e) {} }
       if (api.socket) {
         if (handlePatientSession) api.socket.off('patient_session_completed', handlePatientSession);
         if (handleSocketIncoming) api.socket.off('webrtc_incoming_call', handleSocketIncoming);
@@ -2938,8 +2903,9 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
             <div className="mt-6 flex flex-col sm:flex-row items-center gap-3">
               <button
                 onClick={() => {
+                  if (incomingCall.alertId) api.clearCallAlert(incomingCall.alertId).catch(() => {});
                   setSelectedMeeting(incomingCall.meeting || {
-                    title: incomingCall.meetingTitle || 'Clinical Telehealth Video Meeting',
+                    title: incomingCall.meetingTitle || 'Clinical Telehealth Video Consultation',
                     scheduled_time: 'Now (Immediate Telehealth)',
                     room_id: incomingCall.roomId || `remotion-room-${incomingCall.callerPatientId || 'pt_1'}`,
                     patient_id: incomingCall.meeting?.patient_id || incomingCall.callerPatientId || 'pt_1',
@@ -2950,10 +2916,14 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
                 className="w-full sm:flex-1 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/30 cursor-pointer transition-all"
               >
                 <Video className="w-5 h-5" />
-                <span>Accept & Join Video Meeting</span>
+                <span>Accept & Join Video Consultation</span>
               </button>
               <button
-                onClick={() => setIncomingCall(null)}
+                onClick={() => {
+                  if (incomingCall.alertId) api.clearCallAlert(incomingCall.alertId).catch(() => {});
+                  telehealthSignaling.endCall();
+                  setIncomingCall(null);
+                }}
                 className="w-full sm:w-auto px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-sm flex items-center justify-center space-x-2 cursor-pointer transition-all"
               >
                 <PhoneOff className="w-4 h-4 text-rose-400" />
@@ -3501,6 +3471,11 @@ export default function TherapistPortal({ currentUser, onOpenHeadsetModal }) {
           onClose={() => setSelectedGame(null)}
         />
       )}
+
+      {/* Bottom Disclaimer */}
+      <footer className="mt-8 py-4 border-t border-slate-800/60 text-center text-[11px] text-slate-500 font-mono">
+        Prototype - synthetic demo data - not a medical device. Built for academic research and motor rehabilitation support.
+      </footer>
 
       {/* Remo Assistant in Therapist Mode */}
       <RemoAssistant

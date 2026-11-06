@@ -352,6 +352,9 @@ export default function LandingPage({
             <div className="text-[11px] text-slate-600 mt-1">Built with React, Node.js, Three.js, MediaPipe, and WebXR.</div>
           </div>
         </div>
+        <div className="max-w-7xl mx-auto mt-6 pt-4 border-t border-slate-900 text-center text-xs text-slate-500 font-mono">
+          Prototype - synthetic demo data - not a medical device. Built for academic research and motor rehabilitation support.
+        </div>
       </footer>
     </div>
   );

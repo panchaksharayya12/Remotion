@@ -753,6 +753,15 @@ export default async function handler(req, res) {
       ACTIVE_CALL_ALERTS.push(alertData);
       return res.status(200).json({ success: true, alert: alertData });
     }
+    if (req.method === 'DELETE') {
+      const alertId = url.searchParams.get('id') || body.id;
+      if (alertId) {
+        ACTIVE_CALL_ALERTS = ACTIVE_CALL_ALERTS.filter(a => a.id !== alertId);
+      } else {
+        ACTIVE_CALL_ALERTS = [];
+      }
+      return res.status(200).json({ success: true });
+    }
     const targetRole = url.searchParams.get('targetRole') || '';
     const excludeCallerRole = url.searchParams.get('excludeCallerRole') || '';
     const pendingAlerts = ACTIVE_CALL_ALERTS.filter(

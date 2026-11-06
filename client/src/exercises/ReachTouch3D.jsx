@@ -651,6 +651,10 @@ export default function ReachTouch3D({
           </div>
         </div>
       )}
+      {/* Bottom Academic Disclaimer */}
+      <div className="py-2 px-4 bg-slate-950/90 text-center text-[10px] text-slate-500 font-mono border-t border-slate-800/80">
+        Prototype - synthetic demo data - not a medical device. Built for academic research and motor rehabilitation support.
+      </div>
     </div>
   );
 }

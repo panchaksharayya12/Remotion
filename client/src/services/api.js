@@ -989,6 +989,16 @@ class ApiService {
       return { success: false, alerts: [] };
     }
   }
+
+  async clearCallAlert(alertId = '') {
+    try {
+      return await this.request(`/telehealth/call-alert${alertId ? `?id=${encodeURIComponent(alertId)}` : ''}`, {
+        method: 'DELETE'
+      });
+    } catch (e) {
+      return { success: false };
+    }
+  }
 }
 
 export const api = new ApiService();

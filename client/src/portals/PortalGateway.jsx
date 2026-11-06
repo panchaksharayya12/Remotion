@@ -344,13 +344,18 @@ export default function PortalGateway({ onSelectPortal, onOpenCustomLogin }) {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 font-mono gap-3">
-        <div className="flex items-center space-x-2">
-          <Activity className="w-4 h-4 text-cyan-500" />
-          <span className="text-slate-400 font-semibold">ReMotion Motor Rehabilitation Platform</span>
+      <footer className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 border-t border-slate-800/80 flex flex-col items-center justify-between text-xs text-slate-500 font-mono gap-3">
+        <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center space-x-2">
+            <Activity className="w-4 h-4 text-cyan-500" />
+            <span className="text-slate-400 font-semibold">ReMotion Motor Rehabilitation Platform</span>
+          </div>
+          <div>
+            Computer Vision • 6-DoF XR Kinematics • Precision Biofeedback
+          </div>
         </div>
-        <div>
-          Computer Vision • 6-DoF XR Kinematics • Precision Biofeedback
+        <div className="w-full pt-3 border-t border-slate-900 text-center text-[11px] text-slate-500">
+          Prototype - synthetic demo data - not a medical device. Built for academic research and motor rehabilitation support.
         </div>
       </footer>
     </div>
